@@ -1,0 +1,22 @@
+# datos y secretos — NUNCA a git
+data/
+.env
+cookies*.txt
+
+# artefactos de ejecución
+work/
+dist/
+jobs.json
+
+# python / build
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+
+# media
+*.mp4
+*.mp3
+*.wav

@@ -1,0 +1,3 @@
+version: v1
+model: gemini-2.5-flash
+changelog: initial editor-youtuber prompt set; +reviewer (2ª instancia); duración la dicta la idea (10-170s, prioridades relevancia>viral>autocontención>congruencia>consistencia)

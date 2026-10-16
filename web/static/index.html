@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ytshorter POC</title>
+<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}input{width:100%;padding:.6rem;font-size:1rem}button{padding:.6rem 1rem;margin-top:.5rem;font-size:1rem}pre{background:#111;color:#0f0;padding:1rem;overflow:auto;white-space:pre-wrap}#out{margin-top:1rem;font-weight:bold}#barwrap{background:#ddd;height:8px;margin-top:.5rem}#bar{background:#16a34a;height:8px;width:0}#eta{color:#555;font-size:.9rem;margin-top:.25rem}table{border-collapse:collapse;font-size:.85rem;margin-top:.5rem;width:100%}td,th{border:1px solid #ddd;padding:.2rem .4rem;text-align:left}.cur{background:#fef9c3}.done{color:#16a34a}.fail{background:#fecaca}</style>
+</head>
+<body>
+<h1>ytshorter</h1>
+<p>Pega el link del video largo:</p>
+<input id="url" type="url" placeholder="https://www.youtube.com/watch?v=...">
+<button id="go">Generar shorts</button>
+<div id="out"></div>
+<div id="barwrap"><div id="bar"></div></div>
+<div id="eta"></div>
+<table id="stages" hidden><thead><tr><th>etapa</th><th>estado</th><th>t</th><th>ETA</th></tr></thead><tbody></tbody></table>
+<pre id="log"></pre>
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+$('go').onclick = async () => {
+  const url = $('url').value.trim();
+  if (!url) return;
+  $('out').textContent = 'encolando...';
+  const r = await fetch('/api/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url})});
+  const job = await r.json();
+  poll(job.id);
+};
+async function poll(id) {
+  clearInterval(timer);
+  const tick = async () => {
+    const r = await fetch('/api/jobs/' + id);
+    const j = await r.json();
+    const p = j.progress || null;
+    const pct = p ? Math.round(100 * p.stage_idx / p.total_stages) : 0;
+    $('bar').style.width = (j.status === 'done' ? 100 : pct) + '%';
+    const tb = document.querySelector('#stages tbody');
+    tb.innerHTML = '';
+    if (p && p.stages) {
+      $('stages').hidden = false;
+      const byStage = p.eta_by_stage || {};
+      for (const s of p.stages) {
+        const tr = document.createElement('tr');
+        if (s.state === 'current') tr.className = 'cur';
+        if (s.state === 'failed') tr.className = 'fail';
+        const t = s.state === 'current' ? `${Math.round(p.stage_elapsed_s)}s…`
+          : (s.state === 'done' ? `${Math.round(s.elapsed_s || 0)}s`
+          : (s.median_s ? `~${Math.round(s.median_s)}s` : '–'));
+        let eta = byStage[s.name] !== undefined ? `~${Math.round(byStage[s.name])}s` : '–';
+        if (s.state === 'current' && p.sub_total) {
+          const pct = (p.sub_pct === null || p.sub_pct === undefined) ? '' : ` ${Math.round(p.sub_pct * 100)}%`;
+          eta = `${p.substage} ${p.sub_idx}/${p.sub_total}${pct} (+${Math.round(p.sub_elapsed_s || 0)}s)`;
+        }
+        tr.innerHTML = `<td>${s.name}</td><td class="${s.state === 'done' ? 'done' : ''}">${s.state}</td><td>${t}</td><td>${eta}</td>`;
+        tb.appendChild(tr);
+      }
+    } else { $('stages').hidden = true; }
+    if (j.status === 'done') {
+      $('out').textContent = 'Listo: ' + j.out;
+      $('eta').textContent = p ? `${p.total_stages}/${p.total_stages} en ${p.elapsed_s}s` : '';
+    } else if (j.status === 'error') {
+      $('out').textContent = `Error en ${p ? p.stage : '?'} (ver log)`;
+      $('eta').textContent = p ? `falló tras ${p.elapsed_s}s` : '';
+    } else if (p) {
+      const eta = (p.eta_s === null || p.eta_s === undefined) ? '?' : `~${Math.round(p.eta_s)}s`;
+      const src = p.eta_source === 'history' ? 'histórico' : 'lineal aprox.';
+      const sub = p.sub_total ? ` · ${p.substage} ${p.sub_idx}/${p.sub_total}` +
+        ((p.sub_pct === null || p.sub_pct === undefined) ? '' : ` ${Math.round(p.sub_pct * 100)}%`) : '';
+      $('out').textContent = `Etapa ${p.stage} ${p.stage_idx}/${p.total_stages}${sub}...`;
+      $('eta').textContent = `${Math.round(p.elapsed_s)}s transcurridos · ETA total ${eta} (${src})`;
+    } else {
+      $('out').textContent = 'Procesando... (' + j.status + ')';
+      $('eta').textContent = '';
+    }
+    $('log').textContent = (j.log_tail || []).join('\n');
+    if (j.status === 'done' || j.status === 'error') clearInterval(timer);
+  };
+  await tick();
+  timer = setInterval(tick, 3000);
+}
+</script>
+</body>
+</html>
