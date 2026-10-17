@@ -7,7 +7,36 @@ import sys
 import time
 from pathlib import Path
 
-STAGES = ("download", "transcribe", "analyze", "review", "clip", "caption", "package")
+STAGES = ("download", "transcribe", "analyze", "review", "clip", "caption",
+          "judge", "package")
+
+REVISION_DROP_FRAC = 0.4  # ≥40% de drops → una vuelta de reciclado (Reflexion)
+REVISION_MIN_TOTAL = 4    # planes chicos no gatillan reciclado
+
+
+def should_replan(review_data: dict, frac: float = REVISION_DROP_FRAC,
+                  min_total: int = REVISION_MIN_TOTAL) -> bool:
+    """Generator-Critic: ¿el revisor tiró tanto plan que conviene re-generarlo?
+
+    Técnica (evaluator-optimizer acotado): una sola vuelta de revisión, para
+    no entrar en bucles que convergen al borde del crítico."""
+    try:
+        kept = int(review_data.get("kept", 0) or 0)
+        dropped = int(review_data.get("dropped", 0) or 0)
+        adjusted = int(review_data.get("adjusted", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    total = kept + dropped + adjusted
+    return total >= min_total and dropped / total >= frac
+
+
+def critique_from_review(review_data: dict, max_reasons: int = 6) -> str:
+    """Reflexion: motivos de drop del revisor → correcciones para el editor."""
+    reasons = []
+    for v in review_data.get("verdicts", []) or []:
+        if isinstance(v, dict) and v.get("action") == "drop" and v.get("reason"):
+            reasons.append(str(v["reason"]).strip()[:200])
+    return "\n".join(f"- {r}" for r in reasons[:max_reasons] if r)
 
 
 def _log(msg: str) -> None:
@@ -162,37 +191,81 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
                            started, stage_times)
         _log(f"review ok n={rv.get('n')} {rv.get('review', '')}")
 
-    for i, name, fn in ((4, "clip", cut_all), (5, "caption", caption_all)):
+        # Loop Generator-Critic acotado (1 vuelta): si el revisor tiró ≥40% del
+        # plan, el editor re-planifica con sus críticas (Reflexion) y se vuelve
+        # a auditar. Si algo falla, vale el plan original ya revisado.
+        cpath = Path(wd) / "clips.json"
+        try:
+            review_data = json.loads(cpath.read_text()).get("review", {})
+        except (OSError, ValueError):
+            review_data = {}
+        if (not os.getenv("YT_SHORTER_NO_REVISION")
+                and review_data.get("status") == "applied"
+                and should_replan(review_data)):
+            backup = cpath.read_text(encoding="utf-8")
+            critique = critique_from_review(review_data)
+            _log(f"review: drops altos ({review_data.get('dropped')}/"
+                 f"{sum(int(review_data.get(k, 0) or 0) for k in ('kept', 'dropped', 'adjusted'))})"
+                 f" → reciclo del plan con críticas (Generator-Critic 1/1)")
+            an2 = analyze_workdir(wd, prompts_version=settings.prompts_version,
+                                  force=True, critique=critique)
+            ok2 = bool(an2.get("ok") and an2.get("n"))
+            if ok2:
+                rv2 = review_workdir(wd, prompts_version=settings.prompts_version, force=True)
+                ok2 = bool(rv2.get("ok") and rv2.get("review") == "applied")
+            if ok2:
+                _log(f"review(2) ok n={rv2.get('n')} (plan reciclado)")
+            else:
+                cpath.write_text(backup, encoding="utf-8")
+                _log("revisión 2 no aplicó; vale el plan original revisado")
+
+    def _mk_callbacks(name: str):
         try:
             n_clips = len(json.loads((Path(wd) / "clips.json").read_text()).get("clips", []))
         except (OSError, ValueError):
             n_clips = 0
         _sub(job_id, work_root, "…", 0, n_clips)
-        t_item = [time.time()]
-
-        _cur = ["…"]
-        _cnt = {"done": 0, "total": n_clips}
+        state = {"t": time.time(), "cur": "…", "done": 0, "total": n_clips}
 
         def _on_tick(frac):
-            _sub(job_id, work_root, _cur[0], _cnt["done"], _cnt["total"], pct=frac)
+            _sub(job_id, work_root, state["cur"], state["done"], state["total"], pct=frac)
 
-        def _cb(done, total, label, cached, _name=name, _t=t_item):
-            _cnt["done"] = done
-            _cnt["total"] = total
-            _cur[0] = label
-            dt = round(time.time() - _t[0], 1)
-            _t[0] = time.time()
-            _log(f"{_name} [{done}/{total}] {label} {'cached' if cached else f'{dt}s'}")
+        def _cb(done, total, label, cached):
+            state["done"], state["total"], state["cur"] = done, total, label
+            dt = round(time.time() - state["t"], 1)
+            state["t"] = time.time()
+            _log(f"{name} [{done}/{total}] {label} {'cached' if cached else f'{dt}s'}")
             _sub(job_id, work_root, label, done, total, cached,
                  pct=1.0 if cached else None)
 
-        r = _run(i, name, lambda fn=fn: fn(wd, force=force, on_item=_cb, on_tick=_on_tick))
+        return _on_tick, _cb
+
+    for i, name, fn in ((4, "clip", cut_all), (5, "caption", caption_all)):
+        on_tick, cb = _mk_callbacks(name)
+        r = _run(i, name, lambda fn=fn, cb=cb, on_tick=on_tick:
+                 fn(wd, force=force, on_item=cb, on_tick=on_tick))
         stages.append((name, r))
         if not r.get("ok"):
             return _finish({"ok": False, "stage": name, "detail": r}, job_id, work_root,
                            started, stage_times)
 
-    pk = _run(6, "package", lambda: package_workdir(wd, out_root=out_root, force=True))
+    # Judge independiente (asesor, nunca puerta): audita lo producido. Las
+    # garantías duras son deterministas (bordes de frase, caption, encuadre);
+    # el veredicto LLM es una señal más y jamás bloquea el pipeline.
+    if os.getenv("YT_SHORTER_NO_JUDGE"):
+        _log("judge omitido (YT_SHORTER_NO_JUDGE)")
+    else:
+        from .judge import judge_all
+
+        on_tick, cb = _mk_callbacks("judge")
+        rj = _run(6, "judge", lambda: judge_all(wd, force=force, on_item=cb))
+        stages.append(("judge", rj))
+        if not rj.get("ok"):
+            _log(f"judge omitido: {str(rj.get('error'))[:160]} (no bloquea)")
+        else:
+            _log(f"judge ok n={rj.get('n')} ships={rj.get('ships')}")
+
+    pk = _run(7, "package", lambda: package_workdir(wd, out_root=out_root, force=True))
     stages.append(("package", pk))
     if not pk.get("ok"):
         return _finish({"ok": False, "stage": "package", "detail": pk}, job_id, work_root,

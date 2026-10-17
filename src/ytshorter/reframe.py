@@ -18,6 +18,12 @@ OUT_W, OUT_H = 1080, 1920
 # V1 legacy (fallback y fuentes verticales): centro.
 VERTICAL_VF = "crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale=1080:1920,setsar=1"
 
+# Contenido distribuido (gráfico/texto a lo ancho): en vez de recortar y dejar
+# cosas afuera, se muestra el frame COMPLETO a lo ancho sobre fondo desenfocado.
+# Garantía dura: nada referenciado queda fuera de cuadro.
+CONTAIN_VF = ("split[a][b];[a]scale=1080:1920,boxblur=30:2[bg];"
+              "[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
+
 SAMPLE_W = 320
 SAMPLE_H = 180
 SAMPLE_FPS = 0.5
@@ -25,6 +31,7 @@ MAX_FRAMES = 24
 CENTER_BIAS = 0.10  # prioriza centro salvo contenido claramente lateral
 FACE_MIN_FRAC = 0.03  # cara <3% del frame = público, no sujeto → mandan gráficos
 FACE_HIT_RATIO = 0.3
+COVERAGE_MIN = 0.55  # si la ventana 9:16 cubre <55% de la saliencia → contain
 
 
 def _sample_frames(source: str, start: float, end: float) -> "list":
@@ -169,6 +176,13 @@ def choose_crop(source: str, start: float, end: float) -> "tuple[str, dict]":
         win = np.array([score[x:x + wwin].mean() for x in xs])
         win = win - CENTER_BIAS * np.abs(xs + wwin / 2 - W / 2) / W
         x = int(xs[int(np.argmax(win))])
+        total = float(score.sum())
+        coverage = float(score[x:x + wwin].sum()) / total if total > 0 else 1.0
+        if coverage < COVERAGE_MIN:
+            return CONTAIN_VF, {
+                "mode": "contain",
+                "reason": "contenido distribuido: contain (nada queda fuera)",
+                "coverage": round(coverage, 3)}
         x_full = min(max(round(x / W * iw), 0), iw - ww)
         x_full -= x_full % 2  # crop par (yuv420p)
         cx = (x_full + ww / 2) / iw

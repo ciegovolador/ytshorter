@@ -5,7 +5,8 @@ import json
 import shutil
 from pathlib import Path
 
-COPY_FILES = ("video.mp4", "subtitles.srt", "subtitles.ass", "thumbnail.jpg", "ffmpeg_cmd.sh")
+COPY_FILES = ("video.mp4", "subtitles.srt", "subtitles.ass", "thumbnail.jpg",
+              "ffmpeg_cmd.sh", "judgment.json")
 
 
 def package_workdir(workdir: str, out_root: str = "dist", force: bool = False) -> dict:

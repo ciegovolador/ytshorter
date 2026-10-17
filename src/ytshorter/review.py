@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 
-def review_workdir(workdir: str, prompts_version: str = "v1",
+def review_workdir(workdir: str, prompts_version: str = "v2",
                    force: bool = False) -> dict:
     """Audita clips.json con reviewer.md. Requiere GEMINI_API_KEY."""
     from .analyze import apply_verdicts, build_sentences, load_prompts, review_clips

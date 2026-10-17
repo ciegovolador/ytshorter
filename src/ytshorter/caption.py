@@ -18,6 +18,7 @@ SHADOW = 2
 MARGIN_V = 480          # baseline ~75% de altura: libre del UI de TikTok/Reels
 MAX_WORDS_LINE = 4
 MAX_LINES = 2           # nunca 3 líneas
+MAX_LINE_UNITS = 20.0   # ancho máximo renderizado por línea (~20 chars promedio)
 MIN_WORD_S = 0.12       # palabra más corta visible
 LEAD_S = 0.04           # la palabra aparece un pelo antes de sonar
 HOLD_S = 0.20           # última palabra aguanta +200ms (anti-parpadeo)
@@ -106,27 +107,102 @@ def _estimate_words(text: str, start: float, end: float) -> list[dict]:
 
 
 def words_of(segments: list[dict]) -> list[dict]:
-    """Palabras {start,end,text}: whisper si existen, si no estimadas por segmento."""
-    words = []
-    for s in segments:
-        if s.get("words"):
-            for w in s["words"]:
-                t = (w.get("word") or w.get("text") or "").strip()
-                if t and float(w["end"]) > float(w["start"]):
-                    words.append({"start": float(w["start"]), "end": float(w["end"]),
-                                  "text": t})
+    """Palabras {start,end,text} con timeline global monótono y texto en orden.
+
+    Whisper emite segmentos rolling: cada uno arranca ~2.5s antes de que cierre
+    el anterior, así que el audio real del segmento n es [start_n, start_{n+1}]
+    (su `end` infla con solape). Acá cada segmento se recorta a esa ventana
+    efectiva; words de whisper dentro de la ventana se conservan, y si el
+    segmento venía solapado se re-reparten proporcionalmente (mismo texto,
+    mismo orden). Ventanas vacías (segmento dentro de lo ya cubierto) se
+    descartan: era la fuente de CPS basura y karaoke con 2 palabras encendidas."""
+    segs = [s for s in segments if float(s["end"]) > float(s["start"])]
+    out: list[dict] = []
+    prev_end = 0.0
+    for i, s in enumerate(segs):
+        s0, s1 = float(s["start"]), float(s["end"])
+        if i + 1 < len(segs):
+            nxt = float(segs[i + 1]["start"])
+            if s0 < nxt < s1:
+                s1 = nxt  # el `end` rolling no es audio propio: es solape
+        w0 = max(s0, prev_end)
+        overlapped = s0 < prev_end
+        prev_end = max(prev_end, s1)
+        if s1 <= w0:
+            continue  # ventana vacía: el segmento cae dentro de lo ya cubierto
+        ws = [w for w in (s.get("words") or [])
+              if (w.get("word") or w.get("text") or "").strip()
+              and float(w["end"]) > float(w["start"])]
+        if not ws:
+            out.extend(_estimate_words(s["text"], w0, s1))
+        elif not overlapped:
+            for w in ws:
+                out.append({"start": float(w["start"]), "end": float(w["end"]),
+                            "text": (w.get("word") or w.get("text")).strip()})
         else:
-            words.extend(_estimate_words(s["text"], s["start"], s["end"]))
-    return [w for w in words if w["text"] and w["end"] > w["start"]]
+            span = s1 - w0
+            weights = [max(len((w.get("word") or w.get("text")).strip()), 1)
+                       for w in ws]
+            total = sum(weights)
+            t = w0
+            for w, wt in zip(ws, weights):
+                d = span * wt / total
+                out.append({"start": t, "end": t + d,
+                            "text": (w.get("word") or w.get("text")).strip()})
+                t += d
+    t = 0.0
+    for w in out:
+        if w["start"] < t:
+            w["start"] = t
+        if w["end"] <= w["start"]:
+            w["end"] = w["start"] + MIN_WORD_S
+        t = w["end"]
+    return out
 
 
 def chunk_words(words: list[dict], max_words: int = MAX_WORDS_LINE * MAX_LINES) -> list[list[dict]]:
-    """Bloques de ≤8 palabras (2 líneas de 4): se absorben en 1-2 fijaciones."""
-    return [words[i:i + max_words] for i in range(0, len(words), max_words)]
+    """Bloques de ≤8 palabras = ≤2 líneas renderizadas (≤4 palabras y ≤ ancho
+    por línea). Se achica el bloque si una línea quedaría fuera de ancho o si
+    pediría una 3ª fila: así libass nunca re-envuelve el texto."""
+    chunks: list[list[dict]] = []
+    i = 0
+    while i < len(words):
+        chunk = words[i:i + max_words]
+        while len(chunk) > 1:
+            lines = _render_lines(chunk)
+            if len(lines) <= MAX_LINES and _line_units(lines[-1]) <= MAX_LINE_UNITS:
+                break
+            chunk = chunk[:-1]
+        chunks.append(chunk)
+        i += len(chunk)
+    return chunks
 
 
 def _clean(t: str) -> str:
     return " ".join(t.replace("{", "(").replace("}", ")").split())
+
+
+def _unit_width(text: str) -> float:
+    """Ancho relativo en 'unidades de carácter' para Montserrat bold 84px.
+
+    Caracteres angostos pesan la mitad; anchos (m,w,M,W) 1.4×. Sirve para
+    garantizar que una línea no supere el ancho del frame y se auto-envuelva
+    a una 3ª fila (libass no debe re-wrappear lo que ya partimos)."""
+    total = 0.0
+    for ch in text:
+        if ch in "mwMW":
+            total += 1.4
+        elif ch in "iljI.,;:!'|¿?()[]{}":
+            total += 0.5
+        else:
+            total += 1.0
+    return total
+
+
+def _line_units(line: list[dict]) -> float:
+    if not line:
+        return 0.0
+    return sum(_unit_width(_clean(w["text"])) for w in line) + (len(line) - 1)
 
 
 DANGLERS = frozenset(  # nunca cerrar línea con estas (se cuelgan a la siguiente)
@@ -134,12 +210,23 @@ DANGLERS = frozenset(  # nunca cerrar línea con estas (se cuelgan a la siguient
     "a mi tu the a an to of in on and or".split())
 
 
-def split_lines(chunk: list[dict]) -> list[list[dict]]:
-    """Grupos de ≤4 palabras sin colgadas: si una línea termina en artículo /
-    preposición / conjunción, esa palabra abre la línea siguiente. Además la
-    primera palabra de cada línea pierde puntuación inicial (,;:) — en pantalla
-    una línea jamás empieza con coma."""
-    lines = [chunk[i:i + MAX_WORDS_LINE] for i in range(0, len(chunk), MAX_WORDS_LINE)]
+def _render_lines(chunk: list[dict]) -> list[list[dict]]:
+    """Líneas de ≤4 palabras y ≤ MAX_LINE_UNITS de ancho, sin colgadas al cierre.
+
+    El fill es codicioso y determinista (prefijo), así que llamar `_render_lines`
+    sobre un chunk reproducen exactamente las líneas con que `chunk_words` armó
+    ese chunk."""
+    lines: list[list[dict]] = []
+    cur: list[dict] = []
+    for w in chunk:
+        trial = cur + [w]
+        if len(trial) > MAX_WORDS_LINE or (cur and _line_units(trial) > MAX_LINE_UNITS):
+            lines.append(cur)
+            cur = [w]
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
     out, carry = [], None
     for i, ln in enumerate(lines):
         if carry is not None:
@@ -152,6 +239,13 @@ def split_lines(chunk: list[dict]) -> list[list[dict]]:
         if ln:
             out.append(ln)
     return out
+
+
+def split_lines(chunk: list[dict]) -> list[list[dict]]:
+    """Grupos de ≤4 palabras sin colgadas, con ancho acotado. Además la primera
+    palabra de cada línea pierde puntuación inicial (,;:) — en pantalla una
+    línea jamás empieza con coma."""
+    return _render_lines(chunk)
 
 
 def _first_text(w: dict, first: bool) -> str:
@@ -195,7 +289,7 @@ def to_ass(segments: list[dict], font: str | None = None) -> str:
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Short,{font},{FONT_SIZE},{YELLOW},{WHITE},{BLACK},{SHADOW_C},"
         f"-1,0,0,0,100,100,0,0,1,{OUTLINE},{SHADOW},2,80,80,{MARGIN_V},1\n\n"
-        "[Events]\nFormat: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text\n")
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
     chunks = chunk_words(words_of(segments))
     body = []
     prev_end = 0.0

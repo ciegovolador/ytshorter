@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser("analyze", help="LLM elige clips -> clips.json")
     a.add_argument("transcript", help="work/<id>/ (o transcript.json; se usa su carpeta)")
-    a.add_argument("--prompts", default="v1")
+    a.add_argument("--prompts", default=None)
     a.add_argument("--min-score", type=int, default=70)
     a.add_argument("--max-clips", type=int, default=20)
     a.add_argument("--force", action="store_true")
@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--job-id", default="")
     pl.add_argument("--force", action="store_true")
 
-    rv = sub.add_parser("review", help="audita clips.json con 2ª instancia (etapa 4/7)")
+    rv = sub.add_parser("review", help="audita clips.json con 2ª instancia (etapa 4/8)")
     rv.add_argument("workdir", help="work/<id>/ con clips.json + transcript.json")
     rv.add_argument("--force", action="store_true")
 
@@ -108,10 +108,12 @@ def main(argv: list[str] | None = None) -> int:
         from pathlib import Path
 
         from .analyze import analyze_workdir
+        from .config import load_settings
 
         p = Path(args.transcript)
         workdir = str(p if p.is_dir() else p.parent)
-        res = analyze_workdir(workdir, prompts_version=args.prompts,
+        res = analyze_workdir(workdir,
+                              prompts_version=args.prompts or load_settings().prompts_version,
                               min_score=args.min_score, max_clips=args.max_clips,
                               force=args.force)
         print(json.dumps(res, ensure_ascii=False, indent=1))

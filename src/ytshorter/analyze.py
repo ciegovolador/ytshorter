@@ -46,7 +46,7 @@ def prompts_dir() -> Path:
     return candidates[0]
 
 
-def load_prompts(version: str = "v1") -> dict:
+def load_prompts(version: str = "v2") -> dict:
     base = prompts_dir() / version
     out = {}
     for name in ("editor", "virality", "packaging", "reviewer"):
@@ -260,9 +260,13 @@ def apply_verdicts(clips: list[dict], verdicts: list[dict],
     return kept, stats
 
 
-def analyze_workdir(workdir: str, prompts_version: str = "v1", min_score: int = MIN_SCORE,
-                    max_clips: int = MAX_CLIPS, force: bool = False) -> dict:
-    """Lee transcript.json → clips.json (idempotente salvo --force). Requiere GEMINI_API_KEY."""
+def analyze_workdir(workdir: str, prompts_version: str = "v2", min_score: int = MIN_SCORE,
+                    max_clips: int = MAX_CLIPS, force: bool = False,
+                    critique: str = "") -> dict:
+    """Lee transcript.json → clips.json (idempotente salvo --force). Requiere GEMINI_API_KEY.
+
+    `critique` (opcional): motivos de drops del revisor para la vuelta de
+    Reflexion del loop Generator-Critic (pipeline la pasa al reciclar el plan)."""
     from .config import load_settings
 
     settings = load_settings()
@@ -294,9 +298,13 @@ def analyze_workdir(workdir: str, prompts_version: str = "v1", min_score: int = 
             pass
 
     all_clips: list[dict] = []
+    critique_block = (
+        f"\n\nErrores que un revisor independiente marcó al plan anterior "
+        f"(no los repitas):\n{critique}" if critique else "")
     for i, chunk in enumerate(build_chunks(segments)):
         user = (f"Video: {video_title}\nChunk {i + 1} (tiempos en segundos, absolutos al video).\n"
-                f"Devuelve los mejores momentos de ESTE chunk en el JSON pedido.\n\n{chunk_to_text(chunk)}")
+                f"Devuelve los mejores momentos de ESTE chunk en el JSON pedido.\n\n{chunk_to_text(chunk)}"
+                + critique_block)
         try:
             data = call_gemini(system, user, settings.gemini_model, settings.gemini_api_key)
         except Exception as e:

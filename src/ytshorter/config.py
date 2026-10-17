@@ -12,7 +12,7 @@ class Settings:
     whisper_model: str = field(default_factory=lambda: os.getenv("YT_SHORTER_WHISPER_MODEL", "base"))
     work_dir: str = field(default_factory=lambda: os.getenv("YT_SHORTER_WORK", "work"))
     out_dir: str = field(default_factory=lambda: os.getenv("YT_SHORTER_OUT", "dist"))
-    prompts_version: str = field(default_factory=lambda: os.getenv("YT_SHORTER_PROMPTS", "v1"))
+    prompts_version: str = field(default_factory=lambda: os.getenv("YT_SHORTER_PROMPTS", "v2"))
     # La duración la dicta la idea, no al revés: piso editorial (una idea
     # completa no cabe en menos) y techo técnico (YouTube Shorts ≤180s).
     min_short_s: int = 10

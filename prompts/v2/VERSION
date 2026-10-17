@@ -1,0 +1,3 @@
+version: v2
+model: gemini-2.5-flash
+changelog: coherencia interna dura (una idea continua; saltos de tema → drop), bordes exactos en frases, prohibición de anáforas huérfanas, autochequeo obligatorio del editor, "interesante pero irrelevante" → drop
