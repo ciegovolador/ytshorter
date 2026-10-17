@@ -26,6 +26,7 @@ Por etapas (cada una re-ejecutable, `--force` para repetir):
 ytshorter download "URL" -o work/
 ytshorter transcribe work/<id>/
 ytshorter analyze work/<id>/ --prompts v1
+ytshorter review work/<id>/          # 2ª instancia audita el plan (stage 4/7)
 ytshorter clip work/<id>/
 ytshorter caption work/<id>/
 ytshorter package work/<id>/ --out dist/
@@ -38,7 +39,7 @@ ytshorter jobs
 ytshorter serve --port 8000  # abre http://localhost:8000
 ```
 
-Un campo URL → encola el pipeline en background → muestra la ruta de la carpeta al terminar.
+Un campo URL → encola el pipeline en background → muestra la ruta de la carpeta al terminar. La versión del build (`vX.Y.Z`) se muestra junto al título vía `GET /api/version` y en la 1ª línea del log del pipeline — si no coincide con `pyproject.toml`, la imagen/instancia está vieja (rebuild: BR-020).
 
 ## Run with containers (podman-first)
 
@@ -81,8 +82,8 @@ kubectl port-forward svc/ytshorter 8000:8000
 ## Estructura
 
 ```
-src/ytshorter/  download transcribe analyze clip reframe caption package pipeline queue web config doctor cli
-prompts/v1/     editor.md virality.md packaging.md VERSION   # prompts versionados
+src/ytshorter/  download transcribe analyze review clip reframe caption package pipeline queue web config doctor cli judge ffmpeg
+prompts/v1/     editor.md virality.md reviewer.md packaging.md VERSION  # prompts versionados
 web/static/     index.html                                   # POC 1-campo, sin build
 docs/           business-rules.md specs/ evals.md            # decisiones + evals de sesión
 tests/          test_smoke test_fase{2,3,4,5,6} test_evals

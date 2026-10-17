@@ -7,6 +7,7 @@ import sys
 
 
 def run_doctor(as_json: bool = False) -> int:
+    from . import __version__
     from .config import load_settings
 
     settings = load_settings()
@@ -16,6 +17,7 @@ def run_doctor(as_json: bool = False) -> int:
     except ImportError:
         whisper_local = "MISSING (extra local no instalado; solo youtube-captions)"
     checks = {
+        "version": __version__,
         "python": sys.version.split()[0],
         "ffmpeg": shutil.which("ffmpeg") or "MISSING",
         "ffprobe": shutil.which("ffprobe") or "MISSING",

@@ -1,12 +1,13 @@
-"""pipeline.py (F6) — orquesta download→transcribe→analyze→clip→caption→package. Una sola pasada."""
+"""pipeline.py — orquesta download→transcribe→analyze→review→clip→caption→package."""
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
-STAGES = ("download", "transcribe", "analyze", "clip", "caption", "package")
+STAGES = ("download", "transcribe", "analyze", "review", "clip", "caption", "package")
 
 
 def _log(msg: str) -> None:
@@ -101,14 +102,16 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
     from .clip import cut_all
     from .download import download_url
     from .package import package_workdir
+    from .review import review_workdir
     from .transcribe import transcribe_workdir
+    from . import __version__
     from .config import load_settings
 
     settings = load_settings()
     stages = []
     started = time.time()
     stage_times: dict[str, float] = {}
-    _log(f"url={url} stages={len(STAGES)}")
+    _log(f"v{__version__} url={url} stages={len(STAGES)}")
 
     def _run(idx: int, label: str, fn):
         total = len(STAGES)
@@ -148,7 +151,18 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
         return _finish({"ok": False, "stage": "analyze", "detail": "0 clips (sube --min-score?)"},
                        job_id, work_root, started, stage_times)
 
-    for i, name, fn in ((3, "clip", cut_all), (4, "caption", caption_all)):
+    if os.getenv("YT_SHORTER_NO_REVIEW"):
+        _log("review omitida (YT_SHORTER_NO_REVIEW)")
+    else:
+        rv = _run(3, "review", lambda: review_workdir(
+            wd, prompts_version=settings.prompts_version, force=force))
+        stages.append(("review", rv))
+        if not rv.get("ok"):
+            return _finish({"ok": False, "stage": "review", "detail": rv}, job_id, work_root,
+                           started, stage_times)
+        _log(f"review ok n={rv.get('n')} {rv.get('review', '')}")
+
+    for i, name, fn in ((4, "clip", cut_all), (5, "caption", caption_all)):
         try:
             n_clips = len(json.loads((Path(wd) / "clips.json").read_text()).get("clips", []))
         except (OSError, ValueError):
@@ -178,7 +192,7 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
             return _finish({"ok": False, "stage": name, "detail": r}, job_id, work_root,
                            started, stage_times)
 
-    pk = _run(5, "package", lambda: package_workdir(wd, out_root=out_root, force=True))
+    pk = _run(6, "package", lambda: package_workdir(wd, out_root=out_root, force=True))
     stages.append(("package", pk))
     if not pk.get("ok"):
         return _finish({"ok": False, "stage": "package", "detail": pk}, job_id, work_root,

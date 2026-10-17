@@ -7,6 +7,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from . import __version__
+
+
 def _static_dir() -> Path:
     import os
 
@@ -26,7 +29,7 @@ def _static_dir() -> Path:
 
 STATIC = _static_dir()
 
-app = FastAPI(title="ytshorter POC")
+app = FastAPI(title=f"ytshorter POC v{__version__}")
 
 
 class JobIn(BaseModel):
@@ -41,7 +44,14 @@ def _roots() -> tuple[str, str]:
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/version")
+def version():
+    from .pipeline import STAGES
+
+    return {"version": __version__, "stages": len(STAGES)}
 
 
 @app.post("/api/jobs")

@@ -12,8 +12,11 @@ def _not_implemented(name: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
+
     p = argparse.ArgumentParser(prog="ytshorter", description="YouTube largo -> carpeta de shorts")
     p.add_argument("--json", action="store_true", help="salida JSON en stdout")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("download", help="descarga video+audio con yt-dlp")
@@ -54,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("-w", "--work", default="work")
     pl.add_argument("--job-id", default="")
     pl.add_argument("--force", action="store_true")
+
+    rv = sub.add_parser("review", help="audita clips.json con 2ª instancia (etapa 4/7)")
+    rv.add_argument("workdir", help="work/<id>/ con clips.json + transcript.json")
+    rv.add_argument("--force", action="store_true")
 
     sub.add_parser("doctor", help="chequea entorno")
     j = sub.add_parser("jobs", help="lista trabajos background")
@@ -107,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
         res = analyze_workdir(workdir, prompts_version=args.prompts,
                               min_score=args.min_score, max_clips=args.max_clips,
                               force=args.force)
+        print(json.dumps(res, ensure_ascii=False, indent=1))
+        return 0 if res.get("ok") else 2
+    if args.cmd == "review":
+        from .review import review_workdir
+
+        res = review_workdir(args.workdir, force=args.force)
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0 if res.get("ok") else 2
     if args.cmd == "clip":

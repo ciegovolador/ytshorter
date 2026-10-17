@@ -282,23 +282,10 @@ def analyze_workdir(workdir: str, prompts_version: str = "v1", min_score: int = 
         c["id"] = f"short_{i:02d}"
         c["duration"] = round(c["end"] - c["start"], 1)
 
-    # Puerta plan→review→execute: 2ª instancia audita antes de ffmpeg.
-    review_info: dict = {"status": "skipped"}
-    if not os.getenv("YT_SHORTER_NO_REVIEW"):
-        sentences = build_sentences(segments)
-        rev = review_clips(kept, sentences, prompts, settings.gemini_model,
-                           settings.gemini_api_key)
-        if rev["ok"]:
-            kept, stats = apply_verdicts(kept, rev["verdicts"],
-                                         settings.min_short_s, settings.max_short_s)
-            review_info = {"status": "applied", **stats,
-                           "verdicts": rev["verdicts"]}
-            print(f"[analyze] review: {stats}", file=sys.stderr)
-        else:
-            review_info = {"status": "skipped", "error": rev.get("error", "")}
-
+    # Plan sin revisar: la etapa explícita `review` audita antes de ffmpeg.
     out.write_text(json.dumps(
         {"video_id": tdata.get("video_id", wd.name), "prompts_version": prompts_version,
-         "model": settings.gemini_model, "clips": kept, "review": review_info},
+         "model": settings.gemini_model, "clips": kept,
+         "review": {"status": "pending"}},
         ensure_ascii=False, indent=1))
     return {"ok": True, "cached": False, "clips": str(out), "n": len(kept)}
