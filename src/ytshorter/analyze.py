@@ -4,12 +4,31 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 CHUNK_SIZE_S = 1200  # 20 min por chunk (videos largos)
 CHUNK_OVERLAP_S = 60
 MIN_SCORE = 70
 MAX_CLIPS = 20
+
+LLM_ATTEMPTS = 4  # 429/5xx de Gemini ("high demand") suelen ser transitorios
+LLM_BACKOFF_S = (5, 15, 45)  # esperas entre intentos
+_TRANSIENT_LLM = ("UNAVAILABLE", "RESOURCE_EXHAUSTED", "RATE LIMIT", "RATE_LIMIT",
+                  "TIMEOUT", "TIMED OUT", "DEADLINE_EXCEEDED", "OVERLOADED",
+                  "HIGH DEMAND")
+
+
+def _is_transient_llm_error(e: Exception) -> bool:
+    """503/429/etc. → reintentar; 400/403/JSON inválido → fallar rápido."""
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    try:
+        if int(code) in (429, 500, 502, 503, 504):
+            return True
+    except (TypeError, ValueError):
+        pass
+    msg = str(e).upper()
+    return any(t in msg for t in _TRANSIENT_LLM)
 
 
 def prompts_dir() -> Path:
@@ -67,18 +86,31 @@ def chunk_to_text(segments: list[dict]) -> str:
 
 
 def call_gemini(system: str, user: str, model: str, api_key: str) -> dict:
+    """Una sola forma de llamar al LLM (analyze + review). Reintenta errores transitorios."""
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    resp = client.models.generate_content(
-        model=model,
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-        ),
-    )
+    resp = None
+    for attempt in range(1, LLM_ATTEMPTS + 1):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    response_mime_type="application/json",
+                ),
+            )
+            break
+        except Exception as e:  # noqa: BLE001 — clasificamos transitorio vs definitivo
+            if attempt == LLM_ATTEMPTS or not _is_transient_llm_error(e):
+                raise
+            wait = LLM_BACKOFF_S[min(attempt - 1, len(LLM_BACKOFF_S) - 1)]
+            print(f"[analyze] gemini intento {attempt}/{LLM_ATTEMPTS} falló "
+                  f"({str(e).splitlines()[0][:140]}); reintento en {wait}s",
+                  file=sys.stderr)
+            time.sleep(wait)
     text = (resp.text or "").strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
