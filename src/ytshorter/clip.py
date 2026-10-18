@@ -1,15 +1,32 @@
-"""clip.py (F4) — corta cada clip de clips.json a workdir/short_XX/cut.mp4 (9:16, h264)."""
+"""clip.py (F4) — corta cada clip de clips.json a workdir/short_XX/cut.mp4 (9:16, h264).
+
+Los cortes corren en paralelo (`YT_SHORTER_JOBS`, default min(4, nproc//2)):
+son procesos ffmpeg independientes por short, con el encode como cuello real.
+"""
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .ffmpeg import is_valid_video, run_with_progress
 from .reframe import VERTICAL_VF
+
+
+def encode_workers() -> int:
+    """Workers de encode: `YT_SHORTER_JOBS` o min(4, nproc//2) por default."""
+    try:
+        n = int(os.getenv("YT_SHORTER_JOBS", "0"))
+    except ValueError:
+        n = 0
+    if n <= 0:
+        n = min(4, max(1, (os.cpu_count() or 2) // 2))
+    return max(1, n)
 
 
 def prune_short_dirs(workdir: str, keep: "set[str] | None" = None) -> list[str]:
@@ -65,20 +82,20 @@ def cut_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -> di
 
     clips = json.loads(clips_path.read_text()).get("clips", [])
     total = len(clips)
-    done, cached = [], 0
-    for i, c in enumerate(clips):
-        cid = c.get("id") or f"short_{len(done) + 1:02d}"
+    workers = encode_workers()
+    # el progreso por fracción (on_tick) solo tiene sentido en serie: en
+    # paralelo los ticks de varios ffmpeg se pisarían entre sí
+    tick = on_tick if workers == 1 else None
+
+    def process(i: int, c: dict) -> dict:
+        cid = c.get("id") or f"short_{i + 1:02d}"
         cdir = wd / cid
         cdir.mkdir(exist_ok=True)
         cut = cdir / "cut.mp4"
         dur = max(float(c["end"]) - float(c["start"]), 0.0)
         start, end = float(c["start"]), float(c["end"])
         if cut.exists() and not force and is_valid_video(str(cut), dur):
-            cached += 1
-            done.append({"id": cid, "cut": str(cut), "cached": True})
-            if on_item:
-                on_item(i + 1, total, cid, True)
-            continue
+            return {"id": cid, "cut": str(cut), "cached": True}
         if cut.exists() and not force:
             print(f"[clip] {cid}: cut.mp4 inválido (trunco?), re-generando", file=sys.stderr)
             cut.unlink()
@@ -94,13 +111,46 @@ def cut_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -> di
             "#!/bin/sh\n# generado por ytshorter clip (reproducible)\n"
             + " ".join(shlex.quote(x) for x in cmd) + "\n")
         try:
-            run_with_progress(cmd, dur, on_tick=on_tick)
+            run_with_progress(cmd, dur, on_tick=tick)
         except subprocess.CalledProcessError as e:
             cut.unlink(missing_ok=True)  # no dejar parcial que envenene el cache
-            return {"ok": False, "error": f"ffmpeg {cid}: {e}"}
-        done.append({"id": cid, "cut": str(cut), "cached": False})
+            raise RuntimeError(f"ffmpeg {cid}: {e}") from e
+        return {"id": cid, "cut": str(cut), "cached": False}
+
+    done_by_idx: dict[int, dict] = {}
+    error: str | None = None
+
+    def emit(i: int) -> None:
         if on_item:
-            on_item(i + 1, total, cid, False)
+            rec = done_by_idx[i]
+            on_item(i + 1, total, rec["id"], bool(rec.get("cached")))
+
+    if workers > 1 and total > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(process, i, c): i for i, c in enumerate(clips)}
+            for fut in as_completed(futs):
+                i = futs[fut]
+                try:
+                    done_by_idx[i] = fut.result()
+                except Exception as e:  # noqa: BLE001 — primer error gana
+                    error = str(e)
+                    for f2 in futs:
+                        f2.cancel()  # los pendientes no arrancan; los vivos esperan
+                    break
+                emit(i)
+    else:
+        for i, c in enumerate(clips):
+            try:
+                done_by_idx[i] = process(i, c)
+            except Exception as e:  # noqa: BLE001
+                error = str(e)
+                break
+            emit(i)
+
+    if error:
+        return {"ok": False, "error": error}
+    done = [done_by_idx[i] for i in sorted(done_by_idx)]
+    cached = sum(1 for d in done if d.get("cached"))
     try:  # framing → clips.json → metadata.json (señal para editor/QA)
         data = json.loads(clips_path.read_text())
         by_id = {c.get("id"): c for c in data.get("clips", [])}

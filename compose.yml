@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    environment:
+      YT_SHORTER_WORK: /data/work
+      YT_SHORTER_OUT: /data/dist

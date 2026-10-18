@@ -19,9 +19,14 @@ OUT_W, OUT_H = 1080, 1920
 VERTICAL_VF = "crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',scale=1080:1920,setsar=1"
 
 # Contenido distribuido (gráfico/texto a lo ancho): en vez de recortar y dejar
-# cosas afuera, se muestra el frame COMPLETO a lo ancho sobre fondo desenfocado.
+# cosas afuera, se muestra el frame COMPLETO a lo ancho sobre fondo cover
+# (zoom-crop, sin estirar) desenfocado y oscurecido. El blur corre sobre una
+# miniatura 270x480 (~16× menos píxeles): mismo look, ~10× más barato que
+# boxblur a 1080x1920 (que costaba 5-8 min/clip).
 # Garantía dura: nada referenciado queda fuera de cuadro.
-CONTAIN_VF = ("split[a][b];[a]scale=1080:1920,boxblur=30:2[bg];"
+CONTAIN_VF = ("split[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,"
+              "crop=270:480,gblur=sigma=12,scale=1080:1920,"
+              "eq=brightness=-0.12:saturation=0.85[bg];"
               "[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
 
 SAMPLE_W = 320

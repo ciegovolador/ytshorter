@@ -1,0 +1,73 @@
+# ytshorter on Kubernetes (also playable with `podman play kube`).
+# Apply with:
+#   kubectl create secret generic ytshorter-secrets --from-env-file=.env
+#   kubectl apply -f k8s/
+#   kubectl port-forward svc/ytshorter 9000:9000
+# Replace `image:` with your registry (e.g. ghcr.io/<you>/ytshorter:latest)
+# and push with `podman build -t <image> . && podman push <image>`.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ytshorter-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ytshorter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ytshorter
+  template:
+    metadata:
+      labels:
+        app: ytshorter
+    spec:
+      containers:
+        - name: app
+          image: ytshorter:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9000
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ytshorter-secrets
+                  key: GEMINI_API_KEY
+            - name: YT_SHORTER_WORK
+              value: /data/work
+            - name: YT_SHORTER_OUT
+              value: /data/dist
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ytshorter-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ytshorter
+spec:
+  selector:
+    app: ytshorter
+  ports:
+    - port: 9000
+      targetPort: 9000

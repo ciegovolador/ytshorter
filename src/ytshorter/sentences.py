@@ -96,6 +96,56 @@ def build_sentences(segments: list[dict]) -> list[dict]:
     return sentences
 
 
+def fallback_clips(segments: list[dict], need: int,
+                   existing: "list[dict] | None" = None,
+                   min_s: float = 15.0, max_s: float = 170.0,
+                   target_s: float = 40.0) -> list[dict]:
+    """Respaldo local cuando el LLM propone de menos (BR-030, piso de volumen).
+
+    Determinista y sin red: parte la línea de tiempo en ventanas que nacen y
+    terminan en bordes de FRASE (nunca corta a mitad de idea), puntúa por
+    densidad de habla (palabras por minuto) y devuelve las mejores sin
+    solapar >50% con las ya elegidas. Puntúa ≤62: por debajo del piso del
+    editor (70), así jamás desplaza a un clip bueno del LLM."""
+    if need <= 0:
+        return []
+    sents = build_sentences(segments)
+    if not sents:
+        return []
+    windows, cur = [], []
+    for s in sents:
+        cur.append(s)
+        if cur[-1]["end"] - cur[0]["start"] >= target_s:
+            windows.append(cur)
+            cur = []
+    if cur:
+        windows.append(cur)
+
+    cands: list[dict] = []
+    for w in windows:
+        start, end = float(w[0]["start"]), float(w[-1]["end"])
+        dur = end - start
+        if dur < min_s or dur > max_s:
+            continue
+        text = " ".join(x.get("text", "") for x in w)
+        wpm = len(text.split()) / (dur / 60) if dur > 0 else 0.0
+        cands.append({"start": round(start, 2), "end": round(end, 2),
+                      "text": text[:220], "score": min(62, max(40, int(wpm / 3))),
+                      "source": "fallback-local",
+                      "reason": "piso de volumen: respaldo local (sin cuota)"})
+
+    refs = list(existing or [])
+    kept: list[dict] = []
+    rank = sorted(cands, key=lambda x: (x["score"], x["end"] - x["start"]),
+                  reverse=True)
+    for c in rank:
+        if len(kept) >= need:
+            break
+        if all(overlap_ratio(c, k) <= 0.5 for k in refs + kept):
+            kept.append(c)
+    return kept
+
+
 def snap_to_sentences(clips: list[dict], segments: list[dict],
                       max_dur: float = 170.0) -> list[dict]:
     """Ajusta start/end a bordes de FRASE (no de segmento): el clip empieza donde

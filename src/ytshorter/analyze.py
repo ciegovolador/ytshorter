@@ -10,10 +10,24 @@ from pathlib import Path
 # Texto/timing (chunks, frases, límites) vive en sentences.py.
 from .sentences import (  # noqa: F401 — re-export histórico (tests y compat)
     CHUNK_OVERLAP_S, CHUNK_SIZE_S, build_chunks, build_sentences, chunk_to_text,
-    dedupe_clips, merge_stream, overlap_ratio, snap_to_sentences)
+    dedupe_clips, fallback_clips, merge_stream, overlap_ratio, snap_to_sentences)
 
 MIN_SCORE = 70
 MAX_CLIPS = 20
+
+
+def _volume_floor(segments: list[dict], cap: int) -> int:
+    """Piso de volumen (BR-030): ~1 clip cada 4 min, base 8, tope `cap`.
+
+    `YT_SHORTER_MIN_CLIPS` lo sobreescribe (0 = desactivado)."""
+    env = os.getenv("YT_SHORTER_MIN_CLIPS")
+    if env is not None and env.strip():
+        try:
+            return max(0, min(cap, int(env)))
+        except ValueError:
+            pass
+    dur = float(segments[-1].get("end", 0) or 0) if segments else 0.0
+    return min(cap, max(8, int(dur // 240)))
 
 LLM_ATTEMPTS = 4  # 429/5xx de Gemini ("high demand") suelen ser transitorios
 LLM_BACKOFF_S = (5, 15, 45)  # esperas entre intentos
@@ -212,6 +226,18 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     kept = [c for c in all_clips
             if c.get("score", 0) >= min_score
             and settings.min_short_s <= (c["end"] - c["start"]) <= settings.max_short_s][:max_clips]
+    # Piso de volumen (BR-030): si el LLM propuso de menos, completa el
+    # respaldo local determinista. El volumen no depende del humor del modelo.
+    floor_n = _volume_floor(segments, max_clips)
+    fallback_n = 0
+    if len(kept) < floor_n:
+        extra = fallback_clips(segments, floor_n - len(kept), existing=kept,
+                               min_s=settings.min_short_s, max_s=settings.max_short_s)
+        if extra:
+            fallback_n = len(extra)
+            print(f"[analyze] piso de volumen: +{len(extra)} clips de respaldo "
+                  f"local (LLM propuso {len(kept)}, piso {floor_n})", file=sys.stderr)
+            kept = dedupe_clips(kept + extra)[:max_clips]
     for i, c in enumerate(kept, 1):
         c["id"] = f"short_{i:02d}"
         c["duration"] = round(c["end"] - c["start"], 1)
@@ -237,6 +263,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     out.write_text(json.dumps(
         {"video_id": tdata.get("video_id", wd.name), "prompts_version": prompts_version,
          "model": settings.gemini_model, "clips": kept, "vision": vinfo,
+         "volume": {"floor": floor_n, "fallback_local": fallback_n},
          "review": {"status": "pending"}},
         ensure_ascii=False, indent=1))
     return {"ok": True, "cached": False, "clips": str(out), "n": len(kept),

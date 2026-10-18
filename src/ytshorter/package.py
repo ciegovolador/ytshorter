@@ -55,7 +55,30 @@ def package_workdir(workdir: str, out_root: str = "dist", force: bool = False) -
 
     prune_short_dirs(str(dest_root), keep={s["id"] for s in shorts})
 
+    # Embudo por etapa (BR-031): dónde se fue el volumen, en números. Los
+    # drops de cada etapa salen de clips.json; propuestos = final + drops.
+    def _n(d: dict, k: str) -> int:
+        try:
+            return int(d.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    vol = data.get("volume") if isinstance(data.get("volume"), dict) else {}
+    va = data.get("vision") if isinstance(data.get("vision"), dict) else {}
+    rv = data.get("review") if isinstance(data.get("review"), dict) else {}
+    rvv = rv.get("vision") if isinstance(rv.get("vision"), dict) else {}
+    dropped = _n(va, "dropped") + _n(rv, "dropped") + _n(rvv, "dropped")
+    funnel = {
+        "proposed": len(shorts) + dropped,
+        "analyze_vision_dropped": _n(va, "dropped"),
+        "review_dropped": _n(rv, "dropped"),
+        "review_adjusted": _n(rv, "adjusted"),
+        "review_vision_dropped": _n(rvv, "dropped"),
+        "floor": _n(vol, "floor"),
+        "fallback_local": _n(vol, "fallback_local"),
+        "final": len(shorts),
+    }
     manifest.write_text(json.dumps(
-        {"video_id": video_id, "n": len(shorts), "shorts": shorts},
+        {"video_id": video_id, "n": len(shorts), "funnel": funnel, "shorts": shorts},
         ensure_ascii=False, indent=1), encoding="utf-8")
     return {"ok": True, "cached": False, "out": str(dest_root), "n": len(shorts)}

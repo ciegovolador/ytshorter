@@ -84,7 +84,7 @@ kubectl port-forward svc/ytshorter 8000:8000
 
 ```
 src/ytshorter/  download transcribe subs analyze sentences review clip reframe caption subtitles burn package pipeline queue web config doctor cli judge frames vision ffmpeg
-prompts/v3/     editor.md virality.md reviewer.md packaging.md vision.md VERSION  # prompts versionados (v1/v2 conservados)
+prompts/v3|v4/  editor.md virality.md reviewer.md packaging.md vision.md VERSION  # versionados (v1/v2/v3 conservados; v4 = volumen)
 web/static/     index.html                                   # POC 1-campo, sin build
 docs/           business-rules.md specs/ evals.md            # decisiones + evals de sesión
 tests/          test_smoke test_fase{2,3,4,5,6} test_evals test_config test_judge test_vision
