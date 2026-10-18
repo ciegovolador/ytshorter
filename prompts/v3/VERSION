@@ -1,0 +1,3 @@
+version: v3
+model: gemini-2.5-flash
+changelog: editor/reviewer con criterios visuales (referentes en pantalla deben verse), vision.md nuevo (verificador multimodal de candidatos con frames: veta sujeto invisible, gráfico referenciado invisible, encuadre roto, incoherencia con título), analyze/review corren verificación visual por lotes antes de ffmpeg

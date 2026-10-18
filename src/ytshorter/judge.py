@@ -7,60 +7,60 @@ escribe `judgment.json` por short, jamás borra nada.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
 
-JUDGE_VERSION = "v1"
+JUDGE_VERSION = "v2"
 JUDGE_ATTEMPTS = 3  # 429/5xx de Gemini: misma política que analyze/review (BR-025)
+SHIP_MIN_SCORE = 70  # umbral duro: se aplica en código, no se delega al modelo
 
 JUDGE_SYSTEM = """Rol: juez independiente de shorts verticales (segunda instancia).
-No editaste ni elegiste estos clips: los auditas con ojos frescos.
+No editaste ni elegiste estos clips: los auditas con ojos frescos y duros.
 
 Responde SOLO JSON válido: {"score": 0-100, "ship": true|false,
 "issues": ["..."], "notes": "..."}.
 
-Rúbrica (resta por cada fallo):
-- Hook (30): ¿los primeros 3s atrapan? ¿título/hook autocontenido?
-- Encuadre (25): ¿rostro completo y centrado en su tercio? Si habla de algo
-  en pantalla (mapa, tabla, flechas), ¿SE VE? Cara cortada o gráfico ausente = fallo.
-- Captions (20): ¿legibles, sincronizados, sin líneas que empiecen en coma ni
-  palabras colgadas? Bloques cortos (1-2 líneas).
-- Cierre (15): ¿termina en idea cerrada, no en muletilla ni corte seco?
-- Audio/visual (10): ¿thumbnail y frames coherentes con el título?
+Rúbrica con anclas (resta por cada fallo; los topes son obligatorios):
+- Hook (30): ¿los primeros 3s atrapan SIN contexto externo? Si necesita saber
+  quién habla o de qué video sale para entenderse → tope 55.
+- Encuadre (25): rostro completo y centrado en su tercio; si se menciona algo
+  en pantalla (mapa, tabla, flecha), DEBE verse. Cara cortada, cara diminuta
+  o gráfico referenciado invisible → tope 60 y `ship: false`.
+- Captions (20): legibles, sincronizados, bloques de 1-2 líneas, sin comas
+  que inicien línea ni palabras colgadas. Desincronizados o ilegibles → tope 65.
+- Cierre (15): idea cerrada; cortar en muletilla, respiración o frase colgada
+  → tope 75.
+- Audio/visual (10): frames y contexto coherentes con el título; cortes
+  abruptos o resolución rota → tope 70.
 
-`ship: true` solo si score >= 70 Y ningún issue bloqueante (cara cortada,
-gráfico referenciado invisible, hook incomprensible). Sé estricto: mejor
-marcar que aprobar basura. `issues` corto (máx 3), `notes` 1-2 líneas."""
+Reglas de decisión (duras):
+- `ship: true` SOLO si score >= 70 Y ningún issue bloqueante.
+- Bloqueantes: cara cortada, gráfico referenciado invisible, hook
+  incomprensible sin contexto, captions desincronizados.
+- Ante duda razonable: `ship: false` y score a la baja. Aprobar basura es el
+  peor error del juez. `issues` corto (máx 3, concretos), `notes` 1-2 líneas."""
 
 
-def extract_frames(video: str, n: int = 3, width: int = 480) -> list[bytes]:
-    """N JPEGs repartidos del clip. Vacío si ffmpeg falla."""
-    import shutil
+from .frames import sample_frames  # noqa: E402 — reexport histórico de tests
 
-    if not shutil.which("ffmpeg"):
-        return []
-    try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", video], capture_output=True, text=True, check=True)
-        dur = max(float(probe.stdout.strip()), 1.0)
-    except (subprocess.CalledProcessError, ValueError, OSError):
-        return []
-    out = []
-    for i in range(1, n + 1):
-        t = dur * i / (n + 1)
+
+def _judge_chain(system: str, user: str, images: list[bytes],
+                 models: list[str], api_key: str) -> "tuple[dict, str]":
+    """Primer modelo que responda gana; agotado el último, propaga el error.
+
+    La cadena (3.6-flash → 2.5-flash por default) mantiene el veredicto sin
+    degradar a asesor cuando el modelo principal está caído o sin cuota."""
+    last: Exception | None = None
+    for i, m in enumerate(models):
         try:
-            r = subprocess.run(
-                ["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.1f}", "-i", video,
-                 "-frames:v", "1", "-vf", f"scale={width}:-1",
-                 "-f", "mjpeg", "-"], capture_output=True, check=True)
-            if r.stdout:
-                out.append(r.stdout)
-        except (subprocess.CalledProcessError, OSError):
-            continue
-    return out
+            return judge_call(system, user, images, m, api_key), m
+        except Exception as e:  # noqa: BLE001 — probamos el siguiente modelo
+            last = e
+            if i + 1 < len(models):
+                print(f"[judge] {m} falló ({type(e).__name__}); pruebo {models[i + 1]}",
+                      file=sys.stderr, flush=True)
+    raise last if last is not None else RuntimeError("cadena de jueces vacía")
 
 
 def caption_stats(srt_path: str) -> dict:
@@ -120,7 +120,7 @@ def judge_call(system: str, user: str, images: list[bytes],
                     system_instruction=system, response_mime_type="application/json"),
             )
             text = (resp.text or "").strip()
-            if text.startswith("```"):
+            if text.startswith("```") and "\n" in text:
                 text = text.split("\n", 1)[1].rsplit("```", 1)[0]
             return json.loads(text)
         except Exception as e:  # noqa: BLE001 — se decide reintentar o propagar
@@ -133,9 +133,14 @@ def judge_call(system: str, user: str, images: list[bytes],
     raise RuntimeError("unreachable")
 
 
-def judge_short(sdir: str, model: str, api_key: str, n_frames: int = 3,
+def judge_short(sdir: str, model: "str | list[str]", api_key: str,
+                n_frames: "int | None" = None,
                 force: bool = False, clip: dict | None = None) -> dict:
     """Audita un short_XX/ terminado. Escribe judgment.json. Nunca borra.
+
+    `model` acepta uno o varios modelos (cadena de independencia: principal →
+    respaldo). El umbral `score >= 70` se aplica acá, no se delega al modelo.
+    `n_frames=None` → muestreo variable por duración (frames.py).
 
     `clip` (entrada de clips.json) aporta título/descripción/hook/score/framing
     cuando el paquete todavía no existe: la etapa `judge` corre antes que
@@ -166,32 +171,41 @@ def judge_short(sdir: str, model: str, api_key: str, n_frames: int = 3,
     score = meta.get("score", clip.get("score", "?"))
     stats = caption_stats(str(d / "subtitles.srt"))
     framing = meta.get("framing") or clip.get("framing") or {}
+    models = list(dict.fromkeys([model] if isinstance(model, str) else model))
+    images = sample_frames(str(d / "video.mp4"), n=n_frames)
     user = (f"Título: {title}\nDescripción: {desc}\n"
             f"Duración: {dur}s | score editor: {score}\n"
             f"Encuadre elegido: {framing.get('reason', '?')} (x={framing.get('x', '?')})\n"
             f"Captions: {stats['blocks']} bloques, CPS pico {stats['max_cps']}, "
             f"líneas >42 chars: {stats['long_lines']}\n"
             f"Hook: {meta.get('hook_text') or clip.get('hook_text', '')}\n"
-            f"Juzga con la rúbrica. Adjunto {n_frames} frames (inicio/medio/fin).")
-    images = extract_frames(str(d / "video.mp4"), n=n_frames)
+            f"Juzga con la rúbrica. Adjunto {len(images)} frames (muestreo "
+            f"uniforme; el primero es el gancho).")
     try:
-        verdict = judge_call(JUDGE_SYSTEM, user, images, model, api_key)
-        verdict = {"ship": bool(verdict.get("ship", False)),
-                   "score": int(verdict.get("score", 0)),
-                   "issues": list(verdict.get("issues", []))[:3],
-                   "notes": str(verdict.get("notes", ""))[:300],
-                   "judge": JUDGE_VERSION, "model": model,
+        raw, used = _judge_chain(JUDGE_SYSTEM, user, images, models, api_key)
+        sc = int(raw.get("score", 0))
+        ship = bool(raw.get("ship", False))
+        notes = str(raw.get("notes", ""))[:300]
+        if ship and sc < SHIP_MIN_SCORE:
+            ship = False
+            notes = (f"{notes} [umbral 70: score {sc} < 70 → no ship]").strip()
+        verdict = {"ship": ship, "score": sc,
+                   "issues": list(raw.get("issues", []))[:3],
+                   "notes": notes[:300],
+                   "judge": JUDGE_VERSION, "model": used,
                    "frames": len(images)}
     except Exception as e:  # noqa: BLE001 — el juez nunca rompe nada
         verdict = {"ship": True, "score": -1, "issues": [],
                    "notes": f"juez no disponible: {str(e)[:150]}",
-                   "judge": JUDGE_VERSION, "model": model, "frames": len(images)}
+                   "judge": JUDGE_VERSION, "model": "→".join(models),
+                   "frames": len(images)}
     jpath.write_text(json.dumps(verdict, ensure_ascii=False, indent=1),
                      encoding="utf-8")
     return {"id": d.name, **verdict}
 
 
-def judge_all(workdir: str, force: bool = False, on_item=None) -> dict:
+def judge_all(workdir: str, force: bool = False, on_item=None,
+              n_frames: "int | None" = None) -> dict:
     """Etapa `judge` del pipeline: audita TODOS los shorts con video.mp4.
 
     Asesor, no puerta: nunca borra ni bloquea; escribe judgment.json por short
@@ -213,10 +227,13 @@ def judge_all(workdir: str, force: bool = False, on_item=None) -> dict:
         pass
     shorts = sorted(p for p in wd.iterdir()
                     if p.is_dir() and (p / "video.mp4").exists())
+    if clips:  # solo el set vigente: dirs viejos de otro run no se auditan
+        shorts = [s for s in shorts if s.name in clips]
+    models = list(dict.fromkeys([settings.judge_model, settings.judge_fallback_model]))
     results = []
     for i, s in enumerate(shorts):
-        r = judge_short(str(s), settings.gemini_model, settings.gemini_api_key,
-                        force=force, clip=clips.get(s.name))
+        r = judge_short(str(s), models, settings.gemini_api_key,
+                        n_frames=n_frames, force=force, clip=clips.get(s.name))
         results.append(r)
         if on_item:
             on_item(i + 1, len(shorts), s.name, bool(r.get("cached")))
@@ -224,7 +241,8 @@ def judge_all(workdir: str, force: bool = False, on_item=None) -> dict:
     return {"ok": True, "n": len(results), "ships": ships, "shorts": results}
 
 
-def judge_video(vdir: str, model: str, api_key: str, n_frames: int = 3) -> dict:
+def judge_video(vdir: str, model: "str | list[str]", api_key: str,
+                n_frames: "int | None" = None) -> dict:
     """Audita dist/<video_id>/ entero. Devuelve resumen."""
     shorts = sorted(p for p in Path(vdir).iterdir()
                     if p.is_dir() and (p / "video.mp4").exists())

@@ -3,12 +3,37 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from .ffmpeg import is_valid_video, run_with_progress
 from .reframe import VERTICAL_VF
+
+
+def prune_short_dirs(workdir: str, keep: "set[str] | None" = None) -> list[str]:
+    """Poda workdir/short_XX que ya no están en clips.json (ids vigentes).
+
+    Sin clips.json no borra nada (un workdir sin plan no se toca). Se usa en
+    pipeline antes de caption/judge (los dirs viejos de un run anterior no
+    deben auditarse) y en package para el dist. Devuelve los ids podados."""
+    wd = Path(workdir)
+    if not wd.is_dir():
+        return []
+    if keep is None:
+        try:
+            keep = {c["id"] for c in
+                    json.loads((wd / "clips.json").read_text(encoding="utf-8"))
+                    .get("clips", []) if c.get("id")}
+        except (OSError, ValueError):
+            return []
+    removed = []
+    for d in sorted(wd.iterdir()):
+        if d.is_dir() and d.name.startswith("short_") and d.name not in keep:
+            shutil.rmtree(d)
+            removed.append(d.name)
+    return removed
 
 
 def build_cut_cmd(source: Path, start: float, end: float, out: Path,

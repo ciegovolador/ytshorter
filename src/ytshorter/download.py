@@ -21,8 +21,19 @@ def extract_video_id(url: str) -> str:
     return "unknown"
 
 
+def find_info_json(dest) -> "Path | None":
+    """Ubica el sidecar de yt-dlp: el real es `source.info.json` (el opt
+    `infojson_filename` se ignora y el template antepone `source.`);
+    tolera el legado `info.json`."""
+    for name in ("source.info.json", "info.json"):
+        p = Path(dest) / name
+        if p.exists():
+            return p
+    return None
+
+
 def download_url(url: str, out_root: str = "work", force: bool = False) -> dict:
-    """Descarga video+audio merge mp4 en work/<id>/source.mp4 + info.json. Idempotente."""
+    """Descarga video+audio merge mp4 en work/<id>/source.mp4 + source.info.json. Idempotente."""
     from yt_dlp import YoutubeDL
 
     vid = extract_video_id(url)
@@ -32,23 +43,22 @@ def download_url(url: str, out_root: str = "work", force: bool = False) -> dict:
     dest = Path(out_root) / vid
     dest.mkdir(parents=True, exist_ok=True)
     target = dest / "source.mp4"
-    info_path = dest / "info.json"
+    info_path = find_info_json(dest)
 
-    if target.exists() and info_path.exists() and not force:
+    if target.exists() and info_path is not None and not force:
         try:
             info = json.loads(info_path.read_text())
             return {"ok": True, "cached": True, "video_id": vid,
                     "video": str(target), "info": str(info_path),
                     "title": info.get("title", ""), "duration": info.get("duration", 0)}
         except (OSError, ValueError):
-            print("[download] info.json corrupto, re-descargando", file=sys.stderr)
+            print("[download] sidecar info corrupto, re-descargando", file=sys.stderr)
 
     opts = {
         "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
         "merge_output_format": "mp4",
         "outtmpl": str(dest / "source.%(ext)s"),
-        "writeinfojson": True,
-        "infojson_filename": str(info_path),
+        "writeinfojson": True,  # cae en source.info.json (mismo template)
         "restrictfilenames": True,
         "quiet": True,
         "no_warnings": True,
@@ -82,13 +92,18 @@ def download_url(url: str, out_root: str = "work", force: bool = False) -> dict:
         return {"ok": False, "cached": False, "video_id": vid,
                 "error": f"descarga falló tras {MAX_ATTEMPTS} intentos: {last_err}"}
 
-    # yt-dlp puede dejar source.webm según formato; normalizar a source.mp4 ya pedido con merge.
+    # yt-dlp puede dejar source.webm según formato; normalizar a source.mp4 ya
+    # pedido con merge. Solo extensiones de video (nunca source.info.json/.part).
     if not target.exists():
-        cands = sorted(dest.glob("source.*"))
+        exts = (".mp4", ".mkv", ".mov", ".m4v", ".webm")
+        cands = [p for p in dest.glob("source.*") if p.suffix.lower() in exts]
         if not cands:
-            return {"ok": False, "cached": False, "video_id": vid, "error": "descarga sin archivo"}
+            return {"ok": False, "cached": False, "video_id": vid,
+                    "error": "descarga sin archivo de video"}
+        cands.sort(key=lambda p: exts.index(p.suffix.lower()))
         cands[0].rename(target)
-    info = json.loads(info_path.read_text()) if info_path.exists() else {}
+    info_path = find_info_json(dest)
+    info = json.loads(info_path.read_text()) if info_path is not None else {}
     return {"ok": True, "cached": False, "video_id": vid,
-            "video": str(target), "info": str(info_path),
+            "video": str(target), "info": str(info_path or ""),
             "title": info.get("title", ""), "duration": info.get("duration", 0)}

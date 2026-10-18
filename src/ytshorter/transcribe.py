@@ -1,20 +1,24 @@
-"""transcribe.py (F2) — subtítulos de YouTube primero (API + fallback yt-dlp), whisper local opcional.
+"""transcribe.py (F2) — subtítulos de YouTube primero (yt-dlp/json3 + fallback API), whisper local opcional.
 
-Orden: subs ya bajados en el workdir → youtube-transcript-api (reintentos en
-errores transitorios) → yt-dlp (json3/srt, reusa cookies) → faster-whisper.
-El error final incluye el motivo real de cada vía (nunca "sin subtítulos" a ciegas).
+Orden: subs ya bajados en el workdir → yt-dlp (json3/srt, reusa cookies) →
+youtube-transcript-api (solo texto, reintentos en errores transitorios) →
+faster-whisper. yt-dlp va primero porque el json3 de auto-captions es la
+única vía con word-timings (`segs[].tOffsetMs`) y de ahí sale la sincronía
+del karaoke. El error final incluye el motivo real de cada vía (nunca
+"sin subtítulos" a ciegas).
 """
 from __future__ import annotations
 
 import json
-import os
-import re
 import subprocess
 import time
 from pathlib import Path
 
+# Parseo/descarga de subtítulos vive en subs.py (json3 con words, srt, yt-dlp).
+from .subs import (  # noqa: F401 — re-export histórico (tests y compat)
+    _dedupe_rolling, _load_local_subs, _parse_json3, _parse_srt, _ytdlp_subs)
+
 _CAPTION_ATTEMPTS = 3  # reintentos ante bloqueos transitorios de YouTube
-_YTDLP_LANGS = ("es", "es-orig", "en", "en-orig")
 
 # Clasificación por nombre: las clases de youtube-transcript-api cambian entre versiones.
 _TRANSIENT = {
@@ -80,103 +84,6 @@ def _try_youtube_captions(video_id: str) -> "tuple[list[dict] | None, str]":
     return None, reason
 
 
-def _dedupe_rolling(segs: list[dict]) -> list[dict]:
-    """Colapsa repeticiones consecutivas (ventanas rodantes) y normaliza espacios."""
-    out: list[dict] = []
-    for s in segs:
-        text = " ".join(s.get("text", "").split())
-        if not text:
-            continue
-        if out and (text == out[-1]["text"] or text.startswith(out[-1]["text"])):
-            out[-1]["text"] = text
-            out[-1]["end"] = max(out[-1]["end"], float(s["end"]))
-            continue
-        out.append({"start": float(s["start"]), "end": float(s["end"]), "text": text})
-    return out
-
-
-def _parse_json3(text: str) -> list[dict]:
-    """json3 de YouTube: eventos con `segs[].utf8` + `tStartMs`/`dDurationMs`."""
-    events = json.loads(text).get("events", [])
-    segs = []
-    for ev in events:
-        body = "".join(s.get("utf8", "") for s in ev.get("segs", []))
-        if not body.strip():  # eventos de relleno (\n) o cabecera
-            continue
-        start = float(ev.get("tStartMs", 0)) / 1000.0
-        dur = float(ev.get("dDurationMs") or 2000) / 1000.0
-        segs.append({"start": start, "end": start + dur, "text": body})
-    return _dedupe_rolling(segs)
-
-
-def _parse_srt(text: str) -> list[dict]:
-    segs = []
-    for block in re.split(r"\n\s*\n", text.strip()):
-        m = re.search(
-            r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)", block)
-        if not m:
-            continue
-        t = [int(x) for x in m.groups()]
-        body = re.sub(r"<[^>]+>", "", block[m.end():]).strip()
-        if not body:
-            continue
-        segs.append({"start": t[0] * 3600 + t[1] * 60 + t[2] + t[3] / 1000.0,
-                     "end": t[4] * 3600 + t[5] * 60 + t[6] + t[7] / 1000.0,
-                     "text": body})
-    return _dedupe_rolling(segs)
-
-
-def _load_local_subs(wd: Path) -> "list[dict] | None":
-    """Subs ya bajados al workdir (`subs.<lang>.json3/.srt`), preferencia json3."""
-    for pattern, parser in (("subs.*.json3", _parse_json3), ("subs.*.srt", _parse_srt)):
-        for f in sorted(wd.glob(pattern)):
-            try:
-                segs = parser(f.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001 — un archivo corrupto no mata la etapa
-                continue
-            if segs:
-                return segs
-    return None
-
-
-def _ytdlp_subs(video_id: str, wd: Path) -> "tuple[list[dict] | None, str]":
-    """Fallback: baja subtítulos es/en con yt-dlp (reusa YT_SHORTER_COOKIES).
-
-    Un idioma por intento: un 429 en `en` no invalida un `es` ya bajado.
-    """
-    try:
-        from yt_dlp import YoutubeDL
-    except ImportError:
-        return None, "yt-dlp no instalado"
-    cookies = os.getenv("YT_SHORTER_COOKIES", "")
-    reason = "sin subtítulos es/en"
-    for lang in _YTDLP_LANGS:
-        opts = {
-            "skip_download": True,
-            "writesubtitles": True,
-            "writeautomaticsub": True,
-            "subtitleslangs": [lang],
-            "subtitlesformat": "json3/srt/best",
-            "outtmpl": str(wd / "subs.%(ext)s"),
-            "quiet": True,
-            "no_warnings": True,
-            "noprogress": True,
-            "retries": 3,
-            "socket_timeout": 30,
-        }
-        if cookies and Path(cookies).exists():
-            opts["cookiefile"] = cookies
-        try:
-            with YoutubeDL(opts) as ydl:
-                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-        except Exception as e:  # noqa: BLE001 — probamos el siguiente idioma
-            reason = f"{type(e).__name__}: {str(e).splitlines()[0][:160]}".rstrip(": ")
-        segs = _load_local_subs(wd)
-        if segs:
-            return segs, ""
-    return None, reason
-
-
 def _extract_audio(video: Path, audio_wav: Path) -> None:
     audio_wav.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
@@ -186,6 +93,26 @@ def _extract_audio(video: Path, audio_wav: Path) -> None:
     )
 
 
+def _enrich_words(wd: Path, data: dict) -> "list[dict] | None":
+    """Transcript cacheado sin word-timings: reintenta json3 (local o yt-dlp).
+
+    Los workdirs viejos (API vieja, solo texto) se arreglan solos en el
+    próximo run sin exigir --force."""
+    segs0 = data.get("segments") or []
+    vid = str(data.get("video_id") or wd.name)
+    if (data.get("source") not in ("youtube-captions", "yt-dlp-subs")
+            or not segs0 or any(s.get("words") for s in segs0)
+            or len(vid) != 11):
+        return None
+    local = _load_local_subs(wd)
+    if local and any(s.get("words") for s in local):
+        return local
+    got, _why = _ytdlp_subs(vid, wd)
+    if got and any(s.get("words") for s in got):
+        return got
+    return None
+
+
 def transcribe_workdir(workdir: str, whisper_model: str = "base",
                        use_yt_subs_first: bool = True, force: bool = False) -> dict:
     """Transcribe work/<id>/ → transcript.json. Idempotente salvo --force."""
@@ -193,14 +120,23 @@ def transcribe_workdir(workdir: str, whisper_model: str = "base",
     out = wd / "transcript.json"
     if out.exists() and not force:
         data = json.loads(out.read_text())
+        got = _enrich_words(wd, data)
+        if got:
+            data["segments"], data["source"] = got, "yt-dlp-subs"
+            out.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+            return {"ok": True, "cached": False, "enriched": True,
+                    "transcript": str(out), "segments": len(got),
+                    "source": "yt-dlp-subs"}
         return {"ok": True, "cached": True, "transcript": str(out),
                 "segments": len(data.get("segments", [])),
                 "source": data.get("source", "?")}
 
     video = wd / "source.mp4"
-    info_path = wd / "info.json"
+    from .download import find_info_json
+
+    info_path = find_info_json(wd)
     video_id = wd.name
-    if info_path.exists():
+    if info_path is not None:
         try:
             video_id = json.loads(info_path.read_text()).get("id", wd.name)
         except Exception:
@@ -214,16 +150,16 @@ def transcribe_workdir(workdir: str, whisper_model: str = "base",
         if segments:
             source = "yt-dlp-subs"
         if not segments:
-            got, why = _try_youtube_captions(str(video_id))
+            got, why = _ytdlp_subs(str(video_id), wd)  # json3: palabra real
             if got:
-                segments, source = got, "youtube-captions"
+                segments, source = got, "yt-dlp-subs"
             else:
-                reasons.append(f"api {why}")
-                got, why = _ytdlp_subs(str(video_id), wd)
+                reasons.append(f"yt-dlp {why}")
+                got, why = _try_youtube_captions(str(video_id))
                 if got:
-                    segments, source = got, "yt-dlp-subs"
+                    segments, source = got, "youtube-captions"
                 else:
-                    reasons.append(f"yt-dlp {why}")
+                    reasons.append(f"api {why}")
     elif use_yt_subs_first:
         reasons.append(f"video_id '{video_id}' no tiene 11 caracteres")
 

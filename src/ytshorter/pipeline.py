@@ -137,7 +137,6 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
     from .config import load_settings
 
     settings = load_settings()
-    stages = []
     started = time.time()
     stage_times: dict[str, float] = {}
     _log(f"v{__version__} url={url} stages={len(STAGES)}")
@@ -154,7 +153,6 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
         return res
 
     dl = _run(0, "download", lambda: download_url(url, out_root=work_root, force=force))
-    stages.append(("download", dl))
     if not dl.get("ok"):
         return _finish({"ok": False, "stage": "download", "detail": dl}, job_id, work_root,
                        started, stage_times)
@@ -163,7 +161,6 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
 
     tr = _run(1, "transcribe",
               lambda: transcribe_workdir(wd, whisper_model=settings.whisper_model, force=force))
-    stages.append(("transcribe", tr))
     if not tr.get("ok"):
         return _finish({"ok": False, "stage": "transcribe", "detail": tr}, job_id, work_root,
                        started, stage_times)
@@ -171,11 +168,11 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
 
     an = _run(2, "analyze",
               lambda: analyze_workdir(wd, prompts_version=settings.prompts_version, force=force))
-    stages.append(("analyze", an))
     if not an.get("ok"):
         return _finish({"ok": False, "stage": "analyze", "detail": an}, job_id, work_root,
                        started, stage_times)
-    _log(f"analyze ok n={an.get('n')}")
+    vinfo = (an.get("vision") or "skipped")
+    _log(f"analyze ok n={an.get('n')} vision={vinfo}")
     if not an.get("n"):
         return _finish({"ok": False, "stage": "analyze", "detail": "0 clips (sube --min-score?)"},
                        job_id, work_root, started, stage_times)
@@ -185,7 +182,6 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
     else:
         rv = _run(3, "review", lambda: review_workdir(
             wd, prompts_version=settings.prompts_version, force=force))
-        stages.append(("review", rv))
         if not rv.get("ok"):
             return _finish({"ok": False, "stage": "review", "detail": rv}, job_id, work_root,
                            started, stage_times)
@@ -244,10 +240,16 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
         on_tick, cb = _mk_callbacks(name)
         r = _run(i, name, lambda fn=fn, cb=cb, on_tick=on_tick:
                  fn(wd, force=force, on_item=cb, on_tick=on_tick))
-        stages.append((name, r))
         if not r.get("ok"):
             return _finish({"ok": False, "stage": name, "detail": r}, job_id, work_root,
                            started, stage_times)
+        if name == "clip":  # poda dirs de runs viejos antes de caption/judge
+            from .clip import prune_short_dirs
+
+            gone = prune_short_dirs(wd)
+            if gone:
+                _log(f"clip: podados {len(gone)} dirs viejos ({', '.join(gone[:4])}"
+                     f"{', …' if len(gone) > 4 else ''})")
 
     # Judge independiente (asesor, nunca puerta): audita lo producido. Las
     # garantías duras son deterministas (bordes de frase, caption, encuadre);
@@ -259,14 +261,12 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
 
         on_tick, cb = _mk_callbacks("judge")
         rj = _run(6, "judge", lambda: judge_all(wd, force=force, on_item=cb))
-        stages.append(("judge", rj))
         if not rj.get("ok"):
             _log(f"judge omitido: {str(rj.get('error'))[:160]} (no bloquea)")
         else:
             _log(f"judge ok n={rj.get('n')} ships={rj.get('ships')}")
 
     pk = _run(7, "package", lambda: package_workdir(wd, out_root=out_root, force=True))
-    stages.append(("package", pk))
     if not pk.get("ok"):
         return _finish({"ok": False, "stage": "package", "detail": pk}, job_id, work_root,
                        started, stage_times)

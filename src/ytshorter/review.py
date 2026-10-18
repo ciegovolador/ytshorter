@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 
-def review_workdir(workdir: str, prompts_version: str = "v2",
+def review_workdir(workdir: str, prompts_version: str = "v3",
                    force: bool = False) -> dict:
     """Audita clips.json con reviewer.md. Requiere GEMINI_API_KEY."""
     from .analyze import apply_verdicts, build_sentences, load_prompts, review_clips
@@ -48,11 +48,26 @@ def review_workdir(workdir: str, prompts_version: str = "v2",
                 "n": len(clips), "review": "skipped"}
     kept, stats = apply_verdicts(clips, rev["verdicts"],
                                  settings.min_short_s, settings.max_short_s)
+    # Segunda instancia visual: frames reales de cada rango vetado por texto.
+    vinfo: dict = {"status": "skipped", "why": "sin source.mp4"}
+    vpath = wd / "source.mp4"
+    if kept and vpath.exists():
+        from .vision import apply_vision, vision_review
+
+        vres = vision_review(str(vpath), kept, prompts, settings.gemini_model,
+                             settings.gemini_api_key)
+        if vres["ok"]:
+            kept, vstats = apply_vision(kept, vres["verdicts"])
+            vinfo = {"status": "applied", **vstats}
+        else:
+            vinfo = {"status": "skipped",
+                     "why": str(vres.get("skipped") or vres.get("error", ""))[:120]}
     for i, c in enumerate(kept, 1):  # ids contiguos post-drop (aún no hay dirs)
         c["id"] = f"short_{i:02d}"
         c["duration"] = round(c["end"] - c["start"], 1)
     data["clips"] = kept
-    data["review"] = {"status": "applied", **stats, "verdicts": rev["verdicts"]}
+    data["review"] = {"status": "applied", **stats, "verdicts": rev["verdicts"],
+                      "vision": vinfo}
     cpath.write_text(json.dumps(data, ensure_ascii=False, indent=1))
     return {"ok": True, "cached": False, "clips": str(cpath),
             "n": len(kept), "review": "applied"}

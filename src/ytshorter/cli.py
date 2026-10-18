@@ -60,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rv = sub.add_parser("review", help="audita clips.json con 2ª instancia (etapa 4/8)")
     rv.add_argument("workdir", help="work/<id>/ con clips.json + transcript.json")
+    rv.add_argument("--prompts", default=None, help="versión de prompts (default: YT_SHORTER_PROMPTS)")
     rv.add_argument("--force", action="store_true")
 
     sub.add_parser("doctor", help="chequea entorno")
@@ -68,7 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     jd = sub.add_parser("judge", help="LLM-as-judge sobre shorts terminados")
     jd.add_argument("input", help="dist/<video_id>/ o short_XX/")
-    jd.add_argument("--frames", type=int, default=3)
+    jd.add_argument("--model", default=None,
+                    help="modelo juez principal (default: GEMINI_JUDGE_MODEL)")
+    jd.add_argument("--frames", type=int, default=None,
+                    help="nº de frames; sin valor: variable por duración")
 
     sv = sub.add_parser("serve", help="web POC mínima")
     sv.add_argument("--port", type=int, default=8000)
@@ -119,9 +123,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0 if res.get("ok") else 2
     if args.cmd == "review":
+        from .config import load_settings
         from .review import review_workdir
 
-        res = review_workdir(args.workdir, force=args.force)
+        res = review_workdir(args.workdir,
+                             prompts_version=args.prompts or load_settings().prompts_version,
+                             force=args.force)
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0 if res.get("ok") else 2
     if args.cmd == "clip":
@@ -208,15 +215,17 @@ def main(argv: list[str] | None = None) -> int:
         if not settings.llm_configured():
             print(json.dumps({"ok": False, "error": "falta GEMINI_API_KEY en entorno"}))
             return 2
+        models = [m for m in (args.model or settings.judge_model,
+                              settings.judge_fallback_model) if m]
         target = _P(args.input)
         if (target / "video.mp4").exists():
             res = {"ok": True,
-                   "shorts": [judge_short(str(target), settings.gemini_model,
+                   "shorts": [judge_short(str(target), models,
                                           settings.gemini_api_key, args.frames)]}
             res["n"] = 1
             res["ships"] = sum(1 for s in res["shorts"] if s["ship"] and s["score"] >= 0)
         else:
-            res = {"ok": True, **judge_video(str(target), settings.gemini_model,
+            res = {"ok": True, **judge_video(str(target), models,
                                              settings.gemini_api_key, args.frames)}
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0

@@ -49,6 +49,12 @@ def package_workdir(workdir: str, out_root: str = "dist", force: bool = False) -
         shorts.append({"id": cid, "dir": str(d), "title": c.get("title", ""),
                        "duration": c.get("duration", 0), "score": c.get("score", 0)})
 
+    # Re-paquete: los short_XX que ya no están en clips.json no sobreviven
+    # (un dist viejo no debe publicar clips que el plan nuevo descartó).
+    from .clip import prune_short_dirs
+
+    prune_short_dirs(str(dest_root), keep={s["id"] for s in shorts})
+
     manifest.write_text(json.dumps(
         {"video_id": video_id, "n": len(shorts), "shorts": shorts},
         ensure_ascii=False, indent=1), encoding="utf-8")
