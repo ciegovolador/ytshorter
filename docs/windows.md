@@ -6,14 +6,15 @@ Build **self-contained**: un solo `ytshorter.exe` con Python, prompts, web y
 ## Usar
 
 1. GitHub → repo → **Actions** → workflow **windows-exe** → último run.
-2. Descargar el artifact **ytshorter-windows-x64** (contiene `ytshorter.exe`).
+2. Descargar el artifact **ytshorter-windows-x64** (contiene `ytshorter.exe`, ~207 MB).
 3. Guardar el `.exe` en una carpeta propia (ej. `C:\ytshorter`).
 4. **Doble clic**:
    - La primera vez pide `GEMINI_API_KEY` (gratis en
      https://aistudio.google.com) y la guarda en `.env` junto al `.exe`.
-   - Abre solo el navegador en http://localhost:8000: pegás la URL de YouTube
-     y ves el progreso/logs. Nada de consola ni PowerShell.
-5. Para cerrar, cerrá la ventana negra del servidor (o Ctrl+C).
+   - Abre el navegador en http://localhost:8000: pegás la URL de YouTube y ves
+     el progreso/logs. Queda una ventana de consola (negra) con el servidor;
+     no hace falta escribir ningún comando.
+5. Para cerrar, cerrá esa ventana (o Ctrl+C).
 
 Si el navegador no abre, entrá a http://localhost:8000 a mano. Si el puerto
 8000 está ocupado, abrí `cmd.exe` en la carpeta y corré
