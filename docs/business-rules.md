@@ -142,3 +142,13 @@ cambiar, actualizar regla + spec + eval juntos.
   `ship ⇔ score ≥ 70` se aplica en código (`SHIP_MIN_SCORE`), no se delega al
   modelo: un `ship:true` con score menor se degrada y se anota. Frames de
   evidencia variables por duración (~1 cada 12s, piso 4, techo 10, `frames.py`).
+- **BR-033 Proveedores LLM intercambiables (P5.1)**: Gemini sigue siendo el
+  proveedor por defecto y cierra la cadena como respaldo. Groq, OpenRouter y
+  llama.cpp local (API OpenAI-compatible) son opt-in con `GROQ_API_KEY`,
+  `OPENROUTER_API_KEY` o `YT_SHORTER_LOCAL_BASE_URL`; quedan delante de Gemini
+  y `YT_SHORTER_LLM_ORDER` fija el orden explícito. Ante cuota/caída de un
+  proveedor se prueba el siguiente (la cuota es por proveedor) y el modelo
+  usado queda anotado en `clips.json`/`judgment.json`. El juez usa visión:
+  solo entra un proveedor alternativo si se configura `GROQ_VISION_MODEL`,
+  `OPENROUTER_VISION_MODEL` o un modelo local con imágenes (Groq: máx 3
+  frames); la visión de analyze/review sigue en Gemini.

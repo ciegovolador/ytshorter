@@ -20,13 +20,36 @@ class Settings:
     work_dir: str = field(default_factory=lambda: os.getenv("YT_SHORTER_WORK", "work"))
     out_dir: str = field(default_factory=lambda: os.getenv("YT_SHORTER_OUT", "dist"))
     prompts_version: str = field(default_factory=lambda: os.getenv("YT_SHORTER_PROMPTS", "v3"))
+    # Proveedores alternativos (P5.1, API OpenAI-compatible). Opt-in: sin estas
+    # claves todo sigue yendo a Gemini, que además cierra la cadena como respaldo.
+    llm_order: str = field(default_factory=lambda: os.getenv("YT_SHORTER_LLM_ORDER", ""))
+    groq_api_key: str = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
+    groq_model: str = field(
+        default_factory=lambda: os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"))
+    groq_base_url: str = field(
+        default_factory=lambda: os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"))
+    groq_vision_model: str = field(default_factory=lambda: os.getenv("GROQ_VISION_MODEL", ""))
+    openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
+    openrouter_model: str = field(default_factory=lambda: os.getenv(
+        "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"))
+    openrouter_base_url: str = field(default_factory=lambda: os.getenv(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+    openrouter_vision_model: str = field(
+        default_factory=lambda: os.getenv("OPENROUTER_VISION_MODEL", ""))
+    local_base_url: str = field(
+        default_factory=lambda: os.getenv("YT_SHORTER_LOCAL_BASE_URL", ""))
+    local_model: str = field(
+        default_factory=lambda: os.getenv("YT_SHORTER_LOCAL_MODEL", "local-model"))
+    local_api_key: str = field(
+        default_factory=lambda: os.getenv("YT_SHORTER_LOCAL_API_KEY", ""))
     # La duración la dicta la idea, no al revés: piso editorial (una idea
     # completa no cabe en menos) y techo técnico (YouTube Shorts ≤180s).
     min_short_s: int = 10
     max_short_s: int = 170
 
     def llm_configured(self) -> bool:
-        return bool(self.gemini_api_key)
+        return bool(self.gemini_api_key or self.groq_api_key
+                    or self.openrouter_api_key or self.local_base_url)
 
 
 def load_settings() -> Settings:

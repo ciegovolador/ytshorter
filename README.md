@@ -2,13 +2,30 @@
 
 Link de YouTube largo → carpeta con shorts 9:16 listos para subir (video + título + descripción + tags + subtítulos + thumbnail + metadata + comando ffmpeg reproducible).
 
-CLI-first, filosofía UNIX: cada subcomando hace una cosa, componible, idempotente. La web es solo una GUI fina sobre el mismo CLI. LLM: Gemini Flash con prompts versionados.
+CLI-first, filosofía UNIX: cada subcomando hace una cosa, componible, idempotente. La web es solo una GUI fina sobre el mismo CLI. LLM: Gemini Flash con prompts versionados (opcionalmente Groq/OpenRouter/llama.cpp delante, ver abajo).
 
 ## Requisitos
 
 - Python 3.10+ (3.11 en Docker), `ffmpeg` + `ffprobe` con libass, fuentes DejaVu.
 - `GEMINI_API_KEY` ([Google AI Studio](https://aistudio.google.com), free-tier suficiente).
 - Opcional: `YT_SHORTER_COOKIES=/ruta/cookies.txt` si YouTube bloquea descargas anónimas.
+
+### Proveedores LLM (opcional)
+
+Gemini sigue siendo el default y el respaldo. Se puede anteponer Groq, OpenRouter
+o un `llama.cpp` local (API OpenAI-compatible) por entorno; si un proveedor falla
+o agota cuota, la cadena pasa al siguiente:
+
+```bash
+export GROQ_API_KEY=...          # gratis en console.groq.com
+export GROQ_VISION_MODEL=qwen/qwen3.8-27b   # opcional: juez con imágenes
+export OPENROUTER_API_KEY=...    # opcional
+export YT_SHORTER_LOCAL_BASE_URL=http://127.0.0.1:8080/v1  # llama-server
+ytshorter doctor                # muestra la cadena LLM activa
+```
+
+`YT_SHORTER_LLM_ORDER=groq,gemini` fija el orden explícito. La visión de
+analyze/review (lotes de frames) sigue en Gemini.
 
 ## Quickstart local
 

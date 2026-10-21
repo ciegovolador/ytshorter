@@ -30,7 +30,7 @@ def review_workdir(workdir: str, prompts_version: str = "v3",
         clips = data.get("clips", [])
         return {"ok": True, "cached": True, "clips": str(cpath), "n": len(clips)}
     if not settings.llm_configured():
-        return {"ok": False, "error": "falta GEMINI_API_KEY en entorno"}
+        return {"ok": False, "error": "falta GEMINI_API_KEY (o proveedor LLM alternativo) en entorno"}
     if not tpath.exists():
         return {"ok": False, "error": f"falta {tpath} (corre transcribe primero)"}
 

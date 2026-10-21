@@ -210,9 +210,10 @@ def main(argv: list[str] | None = None) -> int:
 
         from .config import load_settings as _ls
         from .judge import judge_short, judge_video
+        from .providers import judge_configured
 
         settings = _ls()
-        if not settings.llm_configured():
+        if not judge_configured(settings.gemini_api_key):
             print(json.dumps({"ok": False, "error": "falta GEMINI_API_KEY en entorno"}))
             return 2
         models = [m for m in (args.model or settings.judge_model,

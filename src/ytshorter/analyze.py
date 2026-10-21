@@ -11,6 +11,7 @@ from pathlib import Path
 from .sentences import (  # noqa: F401 — re-export histórico (tests y compat)
     CHUNK_OVERLAP_S, CHUNK_SIZE_S, build_chunks, build_sentences, chunk_to_text,
     dedupe_clips, fallback_clips, merge_stream, overlap_ratio, snap_to_sentences)
+from .providers import call_text
 
 MIN_SCORE = 70
 MAX_CLIPS = 20
@@ -126,7 +127,7 @@ def review_clips(clips: list[dict], sentences: list[dict], prompts: dict,
             f"Frases del transcript (verifica límites):\n{sents}\n\n"
             f"Devuelve los verdicts en el JSON pedido.")
     try:
-        data = call_gemini(prompts["reviewer"], user, model, api_key)
+        data, _ = call_text(prompts["reviewer"], user, model, api_key)
         verdicts = data.get("verdicts", [])
         assert isinstance(verdicts, list)
         return {"ok": True, "verdicts": verdicts}
@@ -184,7 +185,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
         return {"ok": True, "cached": True, "clips": str(out), "n": len(data.get("clips", []))}
 
     if not settings.llm_configured():
-        return {"ok": False, "error": "falta GEMINI_API_KEY en entorno"}
+        return {"ok": False, "error": "falta GEMINI_API_KEY (o proveedor LLM alternativo) en entorno"}
     if not tpath.exists():
         return {"ok": False, "error": f"falta {tpath} (corre transcribe primero)"}
 
@@ -206,6 +207,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
             pass
 
     all_clips: list[dict] = []
+    used_models: list[str] = []
     critique_block = (
         f"\n\nErrores que un revisor independiente marcó al plan anterior "
         f"(no los repitas):\n{critique}" if critique else "")
@@ -214,9 +216,11 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
                 f"Devuelve los mejores momentos de ESTE chunk en el JSON pedido.\n\n{chunk_to_text(chunk)}"
                 + critique_block)
         try:
-            data = call_gemini(system, user, settings.gemini_model, settings.gemini_api_key)
+            data, used = call_text(system, user, settings.gemini_model,
+                                   settings.gemini_api_key)
+            used_models.append(used)
         except Exception as e:
-            return {"ok": False, "error": f"gemini chunk {i + 1}: {e}"}
+            return {"ok": False, "error": f"LLM chunk {i + 1}: {e}"}
         for c in data.get("clips", []):
             all_clips.append(c)
 
@@ -262,7 +266,8 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     # Plan sin revisar: la etapa explícita `review` audita antes de ffmpeg.
     out.write_text(json.dumps(
         {"video_id": tdata.get("video_id", wd.name), "prompts_version": prompts_version,
-         "model": settings.gemini_model, "clips": kept, "vision": vinfo,
+         "model": "+".join(dict.fromkeys(used_models)) or settings.gemini_model,
+         "clips": kept, "vision": vinfo,
          "volume": {"floor": floor_n, "fallback_local": fallback_n},
          "review": {"status": "pending"}},
         ensure_ascii=False, indent=1))

@@ -43,15 +43,26 @@ Reglas de decisión (duras):
 
 
 from .frames import sample_frames  # noqa: E402 — reexport histórico de tests
+from . import providers as _providers  # noqa: E402 — cadena OpenAI-compatible opt-in
 
 
 def _judge_chain(system: str, user: str, images: list[bytes],
                  models: list[str], api_key: str) -> "tuple[dict, str]":
-    """Primer modelo que responda gana; agotado el último, propaga el error.
+    """Primer proveedor que responda gana; agotado el último, propaga el error.
 
-    La cadena (3.6-flash → 2.5-flash por default) mantiene el veredicto sin
-    degradar a asesor cuando el modelo principal está caído o sin cuota."""
+    Antepone los proveedores visuales OpenAI-compatible configurados (Groq,
+    OpenRouter o local); Gemini cierra la cadena con sus modelos de siempre
+    (3.6-flash → 2.5-flash por default) para mantener el veredicto sin degradar
+    a asesor cuando el modelo principal está caído o sin cuota."""
     last: Exception | None = None
+    for p in _providers.openai_vision_providers():
+        try:
+            raw = _providers.openai_chat(p, system, user, images)
+            return raw, f"{p.name}:{p.model}"
+        except Exception as e:  # noqa: BLE001 — probamos el siguiente proveedor
+            last = e
+            print(f"[judge] {p.name} falló ({type(e).__name__}); pruebo Gemini",
+                  file=sys.stderr, flush=True)
     for i, m in enumerate(models):
         try:
             return judge_call(system, user, images, m, api_key), m
@@ -173,6 +184,9 @@ def judge_short(sdir: str, model: "str | list[str]", api_key: str,
     framing = meta.get("framing") or clip.get("framing") or {}
     models = list(dict.fromkeys([model] if isinstance(model, str) else model))
     images = sample_frames(str(d / "video.mp4"), n=n_frames)
+    cap = _providers.vision_image_cap()  # Groq visual: máx 3 frames por request
+    if cap and len(images) > cap:
+        images = images[:cap]
     user = (f"Título: {title}\nDescripción: {desc}\n"
             f"Duración: {dur}s | score editor: {score}\n"
             f"Encuadre elegido: {framing.get('reason', '?')} (x={framing.get('x', '?')})\n"
@@ -213,7 +227,7 @@ def judge_all(workdir: str, force: bool = False, on_item=None,
     from .config import load_settings
 
     settings = load_settings()
-    if not settings.llm_configured():
+    if not _providers.judge_configured(settings.gemini_api_key):
         return {"ok": False, "error": "falta GEMINI_API_KEY (juez omitido)"}
     wd = Path(workdir)
     if not wd.is_dir():

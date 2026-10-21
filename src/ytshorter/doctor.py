@@ -9,8 +9,10 @@ import sys
 def run_doctor(as_json: bool = False) -> int:
     from . import __version__
     from .config import load_settings
+    from .providers import provider_names
 
     settings = load_settings()
+    providers = provider_names()
     try:
         import faster_whisper  # noqa: F401
         whisper_local = f"ok ({faster_whisper.__version__ if hasattr(faster_whisper, '__version__') else 'instalado'})"
@@ -22,7 +24,8 @@ def run_doctor(as_json: bool = False) -> int:
         "ffmpeg": shutil.which("ffmpeg") or "MISSING",
         "ffprobe": shutil.which("ffprobe") or "MISSING",
         "yt-dlp": shutil.which("yt-dlp") or "MISSING (pip package ok)",
-        "GEMINI_API_KEY": "set" if settings.llm_configured() else "MISSING",
+        "LLM": " → ".join(providers) or "MISSING (Gemini o Groq/OpenRouter/local)",
+        "GEMINI_API_KEY": "set" if settings.gemini_api_key else "MISSING",
         "GEMINI_MODEL": settings.gemini_model,
         "whisper_model": settings.whisper_model,
         "whisper_local": whisper_local,
@@ -30,7 +33,7 @@ def run_doctor(as_json: bool = False) -> int:
     ok = (
         checks["ffmpeg"] != "MISSING"
         and checks["ffprobe"] != "MISSING"
-        and checks["GEMINI_API_KEY"] == "set"
+        and bool(providers)
     )
     if as_json:
         print(json.dumps({"ok": ok, "checks": checks}, indent=2))
@@ -38,5 +41,6 @@ def run_doctor(as_json: bool = False) -> int:
         for k, v in checks.items():
             print(f"{k}: {v}")
         if not ok:
-            print("\nFalta algo. Fija GEMINI_API_KEY y apt install ffmpeg.", file=sys.stderr)
+            print("\nFalta algo. Fija GEMINI_API_KEY (o GROQ_API_KEY/OPENROUTER_API_KEY) "
+                  "y apt install ffmpeg.", file=sys.stderr)
     return 0 if ok else 1
