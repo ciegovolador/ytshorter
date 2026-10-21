@@ -36,10 +36,14 @@ jobs:
         shell: cmd
         run: |
           if not exist packaging\windows\vendor mkdir packaging\windows\vendor
+          if not exist ffmpeg mkdir ffmpeg
           curl -L -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          tar -xf ffmpeg.zip
+          if errorlevel 1 exit /b 1
+          tar -xf ffmpeg.zip -C ffmpeg
+          if errorlevel 1 exit /b 1
           for /f "delims=" %%f in ('where /r ffmpeg ffmpeg.exe') do copy /Y "%%f" packaging\windows\vendor\ffmpeg.exe
           for /f "delims=" %%f in ('where /r ffmpeg ffprobe.exe') do copy /Y "%%f" packaging\windows\vendor\ffprobe.exe
+          dir packaging\windows\vendor
 
       - name: Build exe (onefile)
         run: pyinstaller packaging/windows/ytshorter.spec --noconfirm --clean
