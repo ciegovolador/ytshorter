@@ -20,3 +20,6 @@ build/
 *.mp4
 *.mp3
 *.wav
+
+# notas de investigación (scratch)
+research_notes/
