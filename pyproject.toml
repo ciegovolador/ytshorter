@@ -1,6 +1,6 @@
 [project]
 name = "ytshorter"
-version = "0.7.0"
+version = "0.8.0"
 description = "YouTube largo -> carpeta de shorts listos para subir (CLI-first UNIX, Gemini Flash, ffmpeg)"
 requires-python = ">=3.10"
 dependencies = [

@@ -23,3 +23,8 @@ build/
 
 # notas de investigación (scratch)
 research_notes/
+
+# build Windows: ffmpeg vendorizado por CI / artefactos locales
+packaging/windows/vendor/
+ffmpeg.zip
+/ffmpeg/

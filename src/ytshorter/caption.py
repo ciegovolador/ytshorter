@@ -52,9 +52,9 @@ def caption_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -
         return {"ok": False, "error": f"falta {clips_path} (corre analyze primero)"}
     transcript = []
     if tpath.exists():
-        transcript = json.loads(tpath.read_text()).get("segments", [])
+        transcript = json.loads(tpath.read_text(encoding="utf-8")).get("segments", [])
 
-    clips = json.loads(clips_path.read_text()).get("clips", [])
+    clips = json.loads(clips_path.read_text(encoding="utf-8")).get("clips", [])
     total = len(clips)
     workers = encode_workers()
     tick = on_tick if workers == 1 else None

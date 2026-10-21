@@ -14,7 +14,7 @@ from pathlib import Path
 
 def _last_out_ms(path: str) -> int | None:
     try:
-        text = Path(path).read_text()
+        text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return None
     ms: int | None = None

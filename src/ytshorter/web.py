@@ -12,15 +12,20 @@ from . import __version__
 
 def _static_dir() -> Path:
     import os
+    import sys
 
     override = os.getenv("YT_SHORTER_WEB_STATIC", "")
     if override:
         return Path(override)
     candidates = [
         Path(__file__).resolve().parents[2] / "web" / "static",
+        Path(sys.executable).resolve().parent / "web" / "static",
         Path("/app/web/static"),
         Path.cwd() / "web" / "static",
     ]
+    meipass = getattr(sys, "_MEIPASS", "")  # PyInstaller (Windows exe)
+    if meipass:
+        candidates.insert(0, Path(meipass) / "web" / "static")
     for c in candidates:
         if (c / "index.html").exists():
             return c

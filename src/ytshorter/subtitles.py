@@ -28,11 +28,13 @@ SHADOW_C = "&H99000000"
 
 
 def pick_font() -> str:
-    """Familia pesada disponible: Montserrat > Inter > Poppins > DejaVu."""
+    """Familia pesada disponible: Montserrat > Inter > Poppins > DejaVu/Arial."""
     override = os.getenv("YT_SHORTER_FONT", "")
     if override:
         return override
     roots = [Path("/usr/share/fonts"), Path.home() / ".fonts"]
+    if os.name == "nt":  # Windows no tiene fontconfig ni /usr/share/fonts
+        roots.insert(0, Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
     files = set()
     for r in roots:
         if r.exists():
@@ -45,7 +47,7 @@ def pick_font() -> str:
     ):
         if any(any(n in f for n in needles) for f in files):
             return family
-    return "DejaVu Sans"
+    return "Arial" if os.name == "nt" else "DejaVu Sans"
 
 
 def fmt_srt(t: float) -> str:

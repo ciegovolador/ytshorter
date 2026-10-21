@@ -79,7 +79,28 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _prepend_exe_dir() -> None:
+    """Exe congelado (Windows): ffmpeg/ffprobe viajan dentro del onefile."""
+    if not getattr(sys, "frozen", False):
+        return
+    import os
+    from pathlib import Path
+
+    dirs = [str(Path(sys.executable).resolve().parent)]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        dirs.insert(0, str(Path(meipass)))
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep)
+    for d in reversed(dirs):
+        if d not in parts:
+            path = d + os.pathsep + path
+            parts = path.split(os.pathsep)
+    os.environ["PATH"] = path
+
+
 def main(argv: list[str] | None = None) -> int:
+    _prepend_exe_dir()
     args = build_parser().parse_args(argv)
     if args.cmd == "doctor":
         from .doctor import run_doctor

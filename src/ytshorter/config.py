@@ -2,7 +2,37 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def _load_env_file(path: Path) -> None:
+    """Carga KEY=VALUE simple (.env junto al .exe). No pisa el entorno."""
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip('"').strip("'")
+        if key and not os.environ.get(key):
+            os.environ[key] = val
+
+
+def _load_frozen_env() -> None:
+    """Exe de Windows: .env junto al ejecutable (o CWD), sin variables de shell."""
+    if not getattr(sys, "frozen", False):
+        return
+    exe_dir = Path(sys.executable).resolve().parent
+    for p in (exe_dir / ".env", Path.cwd() / ".env"):
+        if p.exists():
+            _load_env_file(p)
 
 
 @dataclass
@@ -54,3 +84,6 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings()
+
+
+_load_frozen_env()

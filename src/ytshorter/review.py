@@ -23,7 +23,7 @@ def review_workdir(workdir: str, prompts_version: str = "v3",
     if not cpath.exists():
         return {"ok": False, "error": f"falta {cpath} (corre analyze primero)"}
     try:
-        data = json.loads(cpath.read_text())
+        data = json.loads(cpath.read_text(encoding="utf-8"))
     except ValueError:
         return {"ok": False, "error": f"{cpath} corrupto"}
     if data.get("review", {}).get("status") == "applied" and not force:
@@ -37,13 +37,13 @@ def review_workdir(workdir: str, prompts_version: str = "v3",
     clips = data.get("clips", [])
     if not clips:
         return {"ok": False, "error": "clips.json sin clips que revisar"}
-    segments = json.loads(tpath.read_text()).get("segments", [])
+    segments = json.loads(tpath.read_text(encoding="utf-8")).get("segments", [])
     prompts = load_prompts(prompts_version)
     rev = review_clips(clips, build_sentences(segments), prompts,
                        settings.gemini_model, settings.gemini_api_key)
     if not rev["ok"]:
         data["review"] = {"status": "skipped", "error": rev.get("error", "")}
-        cpath.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+        cpath.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         return {"ok": True, "cached": False, "clips": str(cpath),
                 "n": len(clips), "review": "skipped"}
     kept, stats = apply_verdicts(clips, rev["verdicts"],
@@ -68,6 +68,6 @@ def review_workdir(workdir: str, prompts_version: str = "v3",
     data["clips"] = kept
     data["review"] = {"status": "applied", **stats, "verdicts": rev["verdicts"],
                       "vision": vinfo}
-    cpath.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    cpath.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"ok": True, "cached": False, "clips": str(cpath),
             "n": len(kept), "review": "applied"}

@@ -1,0 +1,58 @@
+name: windows-exe
+
+on:
+  workflow_dispatch:
+    inputs:
+      local_whisper:
+        description: "Incluir faster-whisper (exe completo, +~400MB)"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Add local whisper (optional)
+        if: ${{ inputs.local_whisper }}
+        run: pip install -e ".[local]"
+
+      - name: Bundle ffmpeg + ffprobe
+        shell: cmd
+        run: |
+          if not exist packaging\windows\vendor mkdir packaging\windows\vendor
+          curl -L -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          tar -xf ffmpeg.zip
+          for /f "delims=" %%f in ('where /r ffmpeg ffmpeg.exe') do copy /Y "%%f" packaging\windows\vendor\ffmpeg.exe
+          for /f "delims=" %%f in ('where /r ffmpeg ffprobe.exe') do copy /Y "%%f" packaging\windows\vendor\ffprobe.exe
+
+      - name: Build exe (onefile)
+        run: pyinstaller packaging/windows/ytshorter.spec --noconfirm --clean
+
+      - name: Smoke test
+        shell: cmd
+        run: |
+          set GEMINI_API_KEY=dummy
+          dist\ytshorter.exe --version
+          dist\ytshorter.exe --json doctor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytshorter-windows-x64${{ inputs.local_whisper && '-full' || '' }}
+          path: dist/ytshorter.exe
+          if-no-files-found: error

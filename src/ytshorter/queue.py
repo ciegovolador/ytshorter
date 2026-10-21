@@ -24,23 +24,42 @@ def _load(work_root: str) -> list[dict]:
     if not f.exists():
         return []
     try:
-        return json.loads(f.read_text()).get("jobs", [])
+        return json.loads(f.read_text(encoding="utf-8")).get("jobs", [])
     except Exception:
         return []
 
 
 def _save(work_root: str, jobs: list[dict]) -> None:
-    _jobs_file(work_root).write_text(json.dumps({"jobs": jobs}, ensure_ascii=False, indent=1))
+    _jobs_file(work_root).write_text(
+        json.dumps({"jobs": jobs}, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _pipeline_cmd(url: str, out_root: str, work_root: str, jid: str) -> list[str]:
+    """Comando del job. En un exe congelado (PyInstaller) no existe `-m`."""
+    cmd = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        cmd += ["-m", "ytshorter"]
+    return cmd + ["pipeline", url, "-o", out_root, "-w", work_root, "--job-id", jid]
+
+
+def _spawn_kwargs() -> dict:
+    if os.name == "nt":  # Windows: sin consola nueva y sin setsid
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    return {"start_new_session": True}
 
 
 def create_job(url: str, out_root: str = "dist", work_root: str = "work") -> dict:
     jid = f"job-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     log = str(jobs_dir(work_root) / f"{jid}.log")
-    cmd = [sys.executable, "-m", "ytshorter", "pipeline", url,
-           "-o", out_root, "-w", work_root, "--job-id", jid]
+    cmd = _pipeline_cmd(url, out_root, work_root, jid)
+    env = None
+    if os.name == "nt":  # logs UTF-8 (el hijo escribe a un pipe, no a consola)
+        env = os.environ.copy()
+        env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
     with open(log, "w", encoding="utf-8") as fh:
         proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+                                env=env, **_spawn_kwargs())
     job = {"id": jid, "url": url, "status": "running", "pid": proc.pid,
            "log": log, "out": "", "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
     jobs = _load(work_root)
@@ -50,6 +69,21 @@ def create_job(url: str, out_root: str = "dist", work_root: str = "work") -> dic
 
 
 def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        # En Windows os.kill(pid, 0) TERMINA el proceso: usar Win32 API.
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True
@@ -65,7 +99,7 @@ def refresh(job: dict, work_root: str = "work") -> dict:
     res_file = jobs_dir(work_root) / f"{job['id']}.result.json"
     if res_file.exists():
         try:
-            res = json.loads(res_file.read_text())
+            res = json.loads(res_file.read_text(encoding="utf-8"))
             job["status"] = "done" if res.get("ok") else "error"
             job["out"] = res.get("out", "")
             job["result"] = res
@@ -91,7 +125,7 @@ def _attach_progress(job: dict, work_root: str) -> None:
 
     p = jobs_dir(work_root) / f"{job.get('id')}.progress.json"
     try:
-        prog = json.loads(p.read_text())
+        prog = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     try:
@@ -101,7 +135,7 @@ def _attach_progress(job: dict, work_root: str) -> None:
     except (TypeError, ValueError):
         return
     try:
-        hist = json.loads((jobs_dir(work_root) / "stage_history.json").read_text())
+        hist = json.loads((jobs_dir(work_root) / "stage_history.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         hist = {}
     medians = {}

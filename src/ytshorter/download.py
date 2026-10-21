@@ -47,7 +47,7 @@ def download_url(url: str, out_root: str = "work", force: bool = False) -> dict:
 
     if target.exists() and info_path is not None and not force:
         try:
-            info = json.loads(info_path.read_text())
+            info = json.loads(info_path.read_text(encoding="utf-8"))
             return {"ok": True, "cached": True, "video_id": vid,
                     "video": str(target), "info": str(info_path),
                     "title": info.get("title", ""), "duration": info.get("duration", 0)}
@@ -103,7 +103,7 @@ def download_url(url: str, out_root: str = "work", force: bool = False) -> dict:
         cands.sort(key=lambda p: exts.index(p.suffix.lower()))
         cands[0].rename(target)
     info_path = find_info_json(dest)
-    info = json.loads(info_path.read_text()) if info_path is not None else {}
+    info = json.loads(info_path.read_text(encoding="utf-8")) if info_path is not None else {}
     return {"ok": True, "cached": False, "video_id": vid,
             "video": str(target), "info": str(info_path or ""),
             "title": info.get("title", ""), "duration": info.get("duration", 0)}

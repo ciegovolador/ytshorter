@@ -11,8 +11,10 @@ from pathlib import Path
 
 
 def _ass_vf(ass_path: Path) -> str:
-    # filtro ass= necesita ':' y "'" escapados en el path
-    esc = str(ass_path).replace(":", "\\:").replace("'", "\\'\"'\\''")
+    # filtro ass= necesita ':' y "'" escapados; en Windows además el path usa
+    # backslashes, que el parser de filtros interpreta como escape.
+    esc = str(ass_path).replace("\\", "/").replace(":", "\\:")
+    esc = esc.replace("'", "\\'\"'\\''")
     return f"ass='{esc}'"
 
 
@@ -30,14 +32,14 @@ def burn_and_thumb(cdir: Path, force: bool = False, total_s: float = 0.0,
         # El .ass se regenera siempre: el quemado solo vale si se hizo con
         # ESTE ass (hash) y el video abre. Si no, re-quemar (no basta mtime:
         # el ass recién escrito siempre sería "más nuevo").
-        if (burn_hash.exists() and burn_hash.read_text().strip() == digest
+        if (burn_hash.exists() and burn_hash.read_text(encoding="utf-8").strip() == digest
                 and is_valid_video(str(final), total_s)):
             return {"id": cdir.name, "video": str(final), "cached": True}
         final.unlink()  # quemado rancio o inválido: no envenenar el cache
     if not is_valid_video(str(cut), total_s):
         return {"id": cdir.name, "video": "", "cached": False,
                 "error": f"cut inválido {cut} (re-corre clip)"}
-    has_subs = ass_path.exists() and "Dialogue: 0," in ass_path.read_text()
+    has_subs = ass_path.exists() and "Dialogue: 0," in ass_path.read_text(encoding="utf-8")
     if has_subs:
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(cut),
                "-vf", _ass_vf(ass_path),

@@ -119,11 +119,11 @@ def transcribe_workdir(workdir: str, whisper_model: str = "base",
     wd = Path(workdir)
     out = wd / "transcript.json"
     if out.exists() and not force:
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
         got = _enrich_words(wd, data)
         if got:
             data["segments"], data["source"] = got, "yt-dlp-subs"
-            out.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+            out.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
             return {"ok": True, "cached": False, "enriched": True,
                     "transcript": str(out), "segments": len(got),
                     "source": "yt-dlp-subs"}
@@ -138,7 +138,7 @@ def transcribe_workdir(workdir: str, whisper_model: str = "base",
     video_id = wd.name
     if info_path is not None:
         try:
-            video_id = json.loads(info_path.read_text()).get("id", wd.name)
+            video_id = json.loads(info_path.read_text(encoding="utf-8")).get("id", wd.name)
         except Exception:
             pass
 
@@ -188,6 +188,6 @@ def transcribe_workdir(workdir: str, whisper_model: str = "base",
     out.write_text(json.dumps(
         {"video_id": video_id, "source": source, "segments": segments},
         ensure_ascii=False, indent=1,
-    ))
+    ), encoding="utf-8")
     return {"ok": True, "cached": False, "transcript": str(out),
             "segments": len(segments), "source": source}

@@ -14,7 +14,7 @@ def package_workdir(workdir: str, out_root: str = "dist", force: bool = False) -
     clips_path = wd / "clips.json"
     if not clips_path.exists():
         return {"ok": False, "error": f"falta {clips_path}"}
-    data = json.loads(clips_path.read_text())
+    data = json.loads(clips_path.read_text(encoding="utf-8"))
     clips = data.get("clips", [])
     if not clips:
         return {"ok": False, "error": "clips.json sin clips"}
@@ -23,7 +23,7 @@ def package_workdir(workdir: str, out_root: str = "dist", force: bool = False) -
     dest_root = Path(out_root) / video_id
     manifest = dest_root / "manifest.json"
     if manifest.exists() and not force:
-        m = json.loads(manifest.read_text())
+        m = json.loads(manifest.read_text(encoding="utf-8"))
         return {"ok": True, "cached": True, "out": str(dest_root), "n": len(m.get("shorts", []))}
 
     shorts = []

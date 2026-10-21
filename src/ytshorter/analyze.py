@@ -53,11 +53,15 @@ def prompts_dir() -> Path:
     override = os.getenv("YT_SHORTER_PROMPTS_DIR", "")
     if override:
         return Path(override)
+    meipass = getattr(sys, "_MEIPASS", "")  # PyInstaller (Windows exe)
     candidates = [
         Path(__file__).resolve().parents[2] / "prompts",
+        Path(sys.executable).resolve().parent / "prompts",
         Path("/app/prompts"),
         Path.cwd() / "prompts",
     ]
+    if meipass:
+        candidates.insert(0, Path(meipass) / "prompts")
     for c in candidates:
         if c.exists():
             return c
@@ -71,9 +75,9 @@ def load_prompts(version: str = "v3") -> dict:
         p = base / f"{name}.md"
         if not p.exists():
             raise FileNotFoundError(f"falta prompt {p}")
-        out[name] = p.read_text()
+        out[name] = p.read_text(encoding="utf-8")
     p = base / "vision.md"  # opcional: solo v3+ verifica con frames
-    out["vision"] = p.read_text() if p.exists() else ""
+    out["vision"] = p.read_text(encoding="utf-8") if p.exists() else ""
     return out
 
 
@@ -181,7 +185,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     tpath = wd / "transcript.json"
     out = wd / "clips.json"
     if out.exists() and not force:
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
         return {"ok": True, "cached": True, "clips": str(out), "n": len(data.get("clips", []))}
 
     if not settings.llm_configured():
@@ -189,7 +193,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     if not tpath.exists():
         return {"ok": False, "error": f"falta {tpath} (corre transcribe primero)"}
 
-    tdata = json.loads(tpath.read_text())
+    tdata = json.loads(tpath.read_text(encoding="utf-8"))
     segments = tdata.get("segments", [])
     if not segments:
         return {"ok": False, "error": "transcript vacío, nada que analizar"}
@@ -202,7 +206,7 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
     info_path = find_info_json(wd)
     if info_path is not None:
         try:
-            video_title = json.loads(info_path.read_text()).get("title", "")
+            video_title = json.loads(info_path.read_text(encoding="utf-8")).get("title", "")
         except Exception:
             pass
 
@@ -270,6 +274,6 @@ def analyze_workdir(workdir: str, prompts_version: str = "v3", min_score: int = 
          "clips": kept, "vision": vinfo,
          "volume": {"floor": floor_n, "fallback_local": fallback_n},
          "review": {"status": "pending"}},
-        ensure_ascii=False, indent=1))
+        ensure_ascii=False, indent=1), encoding="utf-8")
     return {"ok": True, "cached": False, "clips": str(out), "n": len(kept),
             "vision": vinfo["status"]}

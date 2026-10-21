@@ -54,7 +54,7 @@ def _sub(job_id: str, work_root: str, label: str, sub_idx: int, sub_total: int,
         return
     try:
         p = _progress_path(job_id, work_root)
-        prog = json.loads(p.read_text()) if p.exists() else {}
+        prog = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
         prog.update({
             "substage": label,
             "sub_idx": sub_idx,
@@ -81,7 +81,7 @@ def _record_history(work_root: str, stage_times: dict) -> None:
     try:
         p = _history_path(work_root)
         p.parent.mkdir(parents=True, exist_ok=True)
-        hist = json.loads(p.read_text()) if p.exists() else {}
+        hist = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except (OSError, ValueError):
         hist = {}
     for k, v in (stage_times or {}).items():
@@ -192,7 +192,7 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
         # a auditar. Si algo falla, vale el plan original ya revisado.
         cpath = Path(wd) / "clips.json"
         try:
-            review_data = json.loads(cpath.read_text()).get("review", {})
+            review_data = json.loads(cpath.read_text(encoding="utf-8")).get("review", {})
         except (OSError, ValueError):
             review_data = {}
         if (not os.getenv("YT_SHORTER_NO_REVISION")
@@ -217,7 +217,7 @@ def run_pipeline(url: str, out_root: str = "dist", work_root: str = "work",
 
     def _mk_callbacks(name: str):
         try:
-            n_clips = len(json.loads((Path(wd) / "clips.json").read_text()).get("clips", []))
+            n_clips = len(json.loads((Path(wd) / "clips.json").read_text(encoding="utf-8")).get("clips", []))
         except (OSError, ValueError):
             n_clips = 0
         _sub(job_id, work_root, "…", 0, n_clips)

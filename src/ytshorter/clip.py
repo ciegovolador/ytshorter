@@ -80,7 +80,7 @@ def cut_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -> di
     if not source.exists():
         return {"ok": False, "error": f"falta {source}"}
 
-    clips = json.loads(clips_path.read_text()).get("clips", [])
+    clips = json.loads(clips_path.read_text(encoding="utf-8")).get("clips", [])
     total = len(clips)
     workers = encode_workers()
     # el progreso por fracción (on_tick) solo tiene sentido en serie: en
@@ -109,7 +109,7 @@ def cut_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -> di
         cmd = build_cut_cmd(source, start, end, cut, vf)
         (cdir / "ffmpeg_cmd.sh").write_text(
             "#!/bin/sh\n# generado por ytshorter clip (reproducible)\n"
-            + " ".join(shlex.quote(x) for x in cmd) + "\n")
+            + " ".join(shlex.quote(x) for x in cmd) + "\n", encoding="utf-8")
         try:
             run_with_progress(cmd, dur, on_tick=tick)
         except subprocess.CalledProcessError as e:
@@ -152,12 +152,12 @@ def cut_all(workdir: str, force: bool = False, on_item=None, on_tick=None) -> di
     done = [done_by_idx[i] for i in sorted(done_by_idx)]
     cached = sum(1 for d in done if d.get("cached"))
     try:  # framing → clips.json → metadata.json (señal para editor/QA)
-        data = json.loads(clips_path.read_text())
+        data = json.loads(clips_path.read_text(encoding="utf-8"))
         by_id = {c.get("id"): c for c in data.get("clips", [])}
         for d in done:
             rf = wd / d["id"] / "reframe.json"
             if rf.exists() and d["id"] in by_id:
-                by_id[d["id"]]["framing"] = json.loads(rf.read_text())
+                by_id[d["id"]]["framing"] = json.loads(rf.read_text(encoding="utf-8"))
         clips_path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     except (OSError, ValueError):
         pass

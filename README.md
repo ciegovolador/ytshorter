@@ -51,6 +51,13 @@ ytshorter package work/<id>/ --out dist/
 ytshorter jobs
 ```
 
+## Windows (exe)
+
+Un solo **`ytshorter.exe` self-contained** (Python + prompts + web + ffmpeg
+adentro, sin PowerShell): doble clic → pide la API key una vez → abre la web
+local en http://localhost:8000. Build en **Actions → windows-exe → artifact
+`ytshorter-windows-x64`**. Detalle: [`docs/windows.md`](docs/windows.md).
+
 ## Web POC
 
 ```bash
